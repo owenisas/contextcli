@@ -21,6 +21,8 @@ export interface Profile {
   config_dir: string | null;
   created_at: string;
   updated_at: string;
+  /** True when the credential requires one-time macOS Keychain authorization. */
+  needs_keychain_auth: boolean;
 }
 
 export interface ValidationResult {

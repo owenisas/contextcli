@@ -501,12 +501,15 @@ name = "contextcli-core"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "core-foundation",
+ "core-foundation-sys",
  "directories",
  "hex",
  "rand 0.8.5",
  "rusqlite",
  "secrecy",
  "security-framework",
+ "security-framework-sys",
  "serde",
  "serde_json",
  "serde_yaml",

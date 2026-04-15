@@ -21,6 +21,13 @@ pub trait CredentialStore: Send + Sync {
     fn exists(&self, service: &str, account: &str) -> bool {
         self.retrieve(service, account).is_ok()
     }
+
+    /// Returns true if the secret exists but requires one-time user authorization
+    /// before it can be read silently (macOS Keychain ACL migration needed).
+    /// Always false on non-macOS platforms.
+    fn needs_auth(&self, _service: &str, _account: &str) -> bool {
+        false
+    }
 }
 
 /// Key naming convention for ContextCLI secrets.
@@ -33,7 +40,7 @@ pub fn vault_account(app_id: &str, profile_name: &str, field: &str) -> String {
 }
 
 /// Create the platform-appropriate credential store.
-pub fn create_store(data_dir: &std::path::Path) -> Box<dyn CredentialStore> {
+pub fn create_store(_data_dir: &std::path::Path) -> Box<dyn CredentialStore> {
     #[cfg(target_os = "macos")]
     {
         Box::new(keychain::KeychainStore::new())

@@ -31,6 +31,19 @@ pub fn run(ctx: &AppContext) -> Result<()> {
             "  {} — {} | {} profile(s), default: {}",
             app.display_name, binary_status, profile_count, default_name
         );
+
+        // Show keychain auth warning per profile that needs it
+        for p in profiles.iter().filter(|p| p.needs_keychain_auth) {
+            eprintln!(
+                "    ⚠  {} — needs one-time keychain auth:",
+                p.profile_name
+            );
+            eprintln!(
+                "       contextcli --app {} --profile {} <any command>",
+                app.id, p.profile_name
+            );
+            eprintln!("       then click \"Always Allow\" — never prompted again");
+        }
     }
 
     eprintln!();

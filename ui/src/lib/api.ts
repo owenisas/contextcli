@@ -62,6 +62,7 @@ let mockProfiles: Record<string, Profile[]> = {
       config_dir: null,
       created_at: "2025-01-01T00:00:00",
       updated_at: "2025-01-01T00:00:00",
+      needs_keychain_auth: true,
     },
     {
       id: "2",
@@ -74,6 +75,7 @@ let mockProfiles: Record<string, Profile[]> = {
       config_dir: null,
       created_at: "2025-01-01T00:00:00",
       updated_at: "2025-01-01T00:00:00",
+      needs_keychain_auth: false,
     },
   ],
   gh: [
@@ -88,6 +90,7 @@ let mockProfiles: Record<string, Profile[]> = {
       config_dir: null,
       created_at: "2025-01-01T00:00:00",
       updated_at: "2025-01-01T00:00:00",
+      needs_keychain_auth: false,
     },
   ],
   supabase: [
@@ -102,6 +105,7 @@ let mockProfiles: Record<string, Profile[]> = {
       config_dir: null,
       created_at: "2025-01-01T00:00:00",
       updated_at: "2025-01-01T00:00:00",
+      needs_keychain_auth: false,
     },
   ],
 };
@@ -138,6 +142,7 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
         config_dir: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+        needs_keychain_auth: false,
       };
       if (!mockProfiles[appId]) mockProfiles[appId] = [];
       mockProfiles[appId].push(newProfile);

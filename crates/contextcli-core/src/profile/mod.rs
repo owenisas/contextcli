@@ -97,20 +97,27 @@ impl ProfileManager {
         self.get_profile(app_id, profile_name)
     }
 
-    /// Get a profile by app_id + profile_name.
+    /// Get a profile by app_id + profile_name, annotated with keychain auth state.
     pub fn get_profile(&self, app_id: &str, profile_name: &str) -> Result<Profile> {
-        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
-        conn.query_row(
-            "SELECT id, app_id, profile_name, label, is_default, auth_state,
-                    auth_user, config_dir, created_at, updated_at
-             FROM profiles WHERE app_id = ?1 AND profile_name = ?2",
-            params![app_id, profile_name],
-            |row| row_to_profile(row),
-        )
-        .map_err(|_| Error::ProfileNotFound {
-            app_id: app_id.to_string(),
-            profile_name: profile_name.to_string(),
-        })
+        // Scope connection so it is released before the vault check below.
+        let mut p = {
+            let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
+            conn.query_row(
+                "SELECT id, app_id, profile_name, label, is_default, auth_state,
+                        auth_user, config_dir, created_at, updated_at
+                 FROM profiles WHERE app_id = ?1 AND profile_name = ?2",
+                params![app_id, profile_name],
+                |row| row_to_profile(row),
+            )
+            .map_err(|_| Error::ProfileNotFound {
+                app_id: app_id.to_string(),
+                profile_name: profile_name.to_string(),
+            })?
+        };
+
+        let account = vault::vault_account(&p.app_id, &p.profile_name, "token");
+        p.needs_keychain_auth = self.vault.needs_auth(vault::VAULT_SERVICE, &account);
+        Ok(p)
     }
 
     /// Get the default profile for an app.
@@ -126,17 +133,25 @@ impl ProfileManager {
         .map_err(|_| Error::NoDefaultProfile(app_id.to_string()))
     }
 
-    /// List all profiles for an app.
+    /// List all profiles for an app, annotated with keychain auth state.
     pub fn list_profiles(&self, app_id: &str) -> Result<Vec<Profile>> {
-        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
-        let mut stmt = conn.prepare(
-            "SELECT id, app_id, profile_name, label, is_default, auth_state,
-                    auth_user, config_dir, created_at, updated_at
-             FROM profiles WHERE app_id = ?1 ORDER BY profile_name",
-        )?;
-        let profiles = stmt
-            .query_map(params![app_id], |row| row_to_profile(row))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        // Scope the connection so it is released before the vault checks below.
+        let mut profiles = {
+            let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
+            let mut stmt = conn.prepare(
+                "SELECT id, app_id, profile_name, label, is_default, auth_state,
+                        auth_user, config_dir, created_at, updated_at
+                 FROM profiles WHERE app_id = ?1 ORDER BY profile_name",
+            )?;
+            stmt.query_map(params![app_id], |row| row_to_profile(row))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        // Annotate each profile with its vault auth requirement (silent, no dialog).
+        for p in &mut profiles {
+            let account = vault::vault_account(&p.app_id, &p.profile_name, "token");
+            p.needs_keychain_auth = self.vault.needs_auth(vault::VAULT_SERVICE, &account);
+        }
         Ok(profiles)
     }
 
@@ -172,7 +187,7 @@ impl ProfileManager {
         new_name: &str,
     ) -> Result<Profile> {
         // Check old exists, new doesn't
-        let old_profile = self.get_profile(app_id, old_name)?;
+        let _old_profile = self.get_profile(app_id, old_name)?;
         if self.profile_exists(app_id, new_name) {
             return Err(Error::Other(format!(
                 "profile '{new_name}' already exists for {app_id}"
@@ -436,6 +451,7 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         config_dir: row.get(7)?,
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
+        needs_keychain_auth: false, // annotated by ProfileManager after vault check
     })
 }
 

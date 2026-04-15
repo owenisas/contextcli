@@ -53,7 +53,23 @@ export default function ProfileCard({
   };
 
   return (
-    <div className="border border-border rounded-lg p-4 hover:border-accent/30 transition-colors">
+    <div className={`border rounded-lg p-4 transition-colors ${
+      profile.needs_keychain_auth
+        ? "border-warning/40 hover:border-warning/60"
+        : "border-border hover:border-accent/30"
+    }`}>
+      {/* Keychain auth warning banner */}
+      {profile.needs_keychain_auth && (
+        <div className="flex items-start gap-2 mb-3 px-2.5 py-2 rounded bg-warning/8 border border-warning/20 text-warning text-xs">
+          <span className="mt-0.5 shrink-0">⚠</span>
+          <div>
+            <span className="font-medium">Needs one-time keychain authorization.</span>
+            <span className="text-warning/70 ml-1">
+              Run any command with this profile and click <strong>Always Allow</strong> — never prompted again.
+            </span>
+          </div>
+        </div>
+      )}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-2">
           {/* Default star */}

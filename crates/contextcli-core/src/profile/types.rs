@@ -55,6 +55,11 @@ pub struct Profile {
     pub config_dir: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// True when the credential exists in the vault but requires one-time user
+    /// authorization before it can be read silently (macOS Keychain ACL).
+    /// After the user grants access once, this becomes false permanently.
+    #[serde(default)]
+    pub needs_keychain_auth: bool,
 }
 
 /// Reference to a secret stored in the vault.

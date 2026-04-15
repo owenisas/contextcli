@@ -24,10 +24,20 @@ pub fn run(ctx: &AppContext, app: &str) -> Result<()> {
             .map(|u| format!(" [{u}]"))
             .unwrap_or_default();
 
+        let auth_warn = if p.needs_keychain_auth { " ⚠ needs keychain auth" } else { "" };
+
         eprintln!(
-            "  {}{} — {}{}",
-            p.profile_name, default_marker, status, user
+            "  {}{} — {}{}{}",
+            p.profile_name, default_marker, status, user, auth_warn
         );
+
+        if p.needs_keychain_auth {
+            eprintln!(
+                "    → run: contextcli --app {} --profile {} <any command>",
+                app, p.profile_name
+            );
+            eprintln!("      then click \"Always Allow\" — never prompted again");
+        }
     }
 
     eprintln!();
