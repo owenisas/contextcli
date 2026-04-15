@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build macOS (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            arch: arm64
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            arch: x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      # Build CLI
+      - name: Build CLI
+        run: cargo build --release --target ${{ matrix.target }} -p contextcli
+
+      # Build frontend
+      - name: Build frontend
+        working-directory: ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      # Build GUI
+      - name: Build GUI
+        run: cargo build --release --target ${{ matrix.target }} -p contextcli-gui
+
+      # Codesign
+      - name: Codesign binaries
+        run: |
+          codesign --force --sign - --identifier "com.contextcli.cli" target/${{ matrix.target }}/release/contextcli
+          codesign --force --sign - --identifier "com.contextcli.app" target/${{ matrix.target }}/release/contextcli-gui
+
+      # Package CLI
+      - name: Package CLI
+        run: |
+          tar -czf contextcli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
+            -C target/${{ matrix.target }}/release contextcli
+
+      # Package GUI (.app bundle)
+      - name: Package GUI
+        run: |
+          APP_DIR="ContextCLI.app/Contents"
+          mkdir -p "$APP_DIR/MacOS" "$APP_DIR/Resources"
+          cp target/${{ matrix.target }}/release/contextcli-gui "$APP_DIR/MacOS/ContextCLI"
+          cp target/${{ matrix.target }}/release/contextcli "$APP_DIR/Resources/contextcli"
+          cp src-tauri/icons/icon.png "$APP_DIR/Resources/icon.png"
+          cat > "$APP_DIR/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key><string>ContextCLI</string>
+              <key>CFBundleDisplayName</key><string>ContextCLI</string>
+              <key>CFBundleIdentifier</key><string>com.contextcli.app</string>
+              <key>CFBundleVersion</key><string>${{ github.ref_name }}</string>
+              <key>CFBundleShortVersionString</key><string>${{ github.ref_name }}</string>
+              <key>CFBundleExecutable</key><string>ContextCLI</string>
+              <key>CFBundleIconFile</key><string>icon</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>LSMinimumSystemVersion</key><string>12.0</string>
+              <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          codesign --force --deep --sign - ContextCLI.app
+          zip -r ContextCLI-${{ github.ref_name }}-${{ matrix.target }}.zip ContextCLI.app
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            contextcli-*.tar.gz
+            ContextCLI-*.zip
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            contextcli-*.tar.gz
+            ContextCLI-*.zip

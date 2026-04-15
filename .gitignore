@@ -20,3 +20,4 @@
 /src-tauri/gen/
 *.tsbuildinfo
 .pnpmcfg.json
+SKILL.md
