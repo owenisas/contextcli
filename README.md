@@ -219,38 +219,39 @@ contextcli    contextcli-gui
 - **Auth flow**: env var injection (preferred) or config dir isolation
 - **Project context**: `.contextcli.toml` walks up directories like `.git`
 
-## AI Agent Skill (Claude Code / Codex)
+## AI Agent Integration
 
-ContextCLI ships a skill that teaches AI agents how to manage your CLI profiles. Install it so your agent can switch accounts, add profiles, and link projects for you.
+ContextCLI includes skills/instructions for AI coding agents. When you clone the repo, your agent automatically learns how to manage CLI profiles.
 
-### Install the skill
+### Supported Agents
+
+| Agent | File | Auto-discovered |
+|-------|------|-----------------|
+| **Claude Code** | `.claude/skills/contextcli/SKILL.md` | Yes, on clone |
+| **Windsurf** | `.windsurf/skills/contextcli/SKILL.md` | Yes, on clone |
+| **Cursor** | `.cursorrules` | Yes, on clone |
+| **GitHub Copilot** | `.github/copilot-instructions.md` | Yes, on clone |
+
+### For personal use (all projects)
+
+Copy the skill to your global skills directory so it works everywhere, not just in this repo:
 
 ```bash
 # Claude Code
-cp -r skill/ ~/.claude/skills/contextcli/
+cp -r .claude/skills/contextcli/ ~/.claude/skills/contextcli/
 
-# Codex
-cp -r skill/ ~/.codex/skills/contextcli/
+# Windsurf
+cp -r .windsurf/skills/contextcli/ ~/.windsurf/skills/contextcli/
 ```
 
-Or with one command:
+### What the agent can do
 
-```bash
-git clone https://github.com/owenisas/contextcli.git /tmp/contextcli-skill
-cp -r /tmp/contextcli-skill/skill/ "${CODEX_HOME:-${CLAUDE_HOME:-$HOME/.claude}}/skills/contextcli/"
-rm -rf /tmp/contextcli-skill
-```
-
-After installing, the agent can:
+Once the skill is loaded, your agent can:
 - Run CLI commands under specific profiles
-- Add new profiles (token paste + keychain + DB)
+- Add new profiles (stores token in keychain + creates DB records)
 - Link projects to profiles
 - Set up deny policies
 - Check auth status across all tools
-
-### What the agent knows
-
-The skill teaches the agent the exact commands to store tokens in the keychain, create profile records in SQLite, and wire up secret references — so it can add a profile without interactive login.
 
 ## Security
 

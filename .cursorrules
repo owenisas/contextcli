@@ -1,0 +1,20 @@
+ContextCLI is installed. Use it to run CLI tools under specific auth profiles.
+
+Commands:
+  contextcli --app <tool> [--profile <name>] <command>   # forward to native CLI
+  contextcli apps                                         # list tools
+  contextcli profiles --app <tool>                        # list profiles
+  contextcli login --app <tool> --profile <name>          # login
+  contextcli default --app <tool> --profile <name>        # set default
+  contextcli link --app <tool> --profile <name>           # link project dir
+  contextcli project                                      # show project config
+
+To add a profile with a token:
+  security add-generic-password -a "<app>/<profile>/token" -s "contextcli" -w "<TOKEN>" -U
+  PROFILE_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
+  sqlite3 ~/.contextcli/contextcli.db "INSERT INTO profiles (id, app_id, profile_name, label, is_default, auth_state, auth_user, created_at, updated_at) VALUES ('$PROFILE_ID', '<app>', '<profile>', '<label>', 0, 'authenticated', '<user>', datetime('now'), datetime('now'));"
+  REF_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
+  sqlite3 ~/.contextcli/contextcli.db "INSERT INTO secret_refs (id, profile_id, secret_key, vault_service, vault_account, created_at) VALUES ('$REF_ID', '$PROFILE_ID', 'token', 'contextcli', '<app>/<profile>/token', datetime('now'));"
+
+Add tools in ~/.contextcli/adapters.toml (4 lines, no code).
+Project config in .contextcli.toml (profile mapping + deny policies).

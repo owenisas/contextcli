@@ -20,4 +20,6 @@
 /src-tauri/gen/
 *.tsbuildinfo
 .pnpmcfg.json
-SKILL.md
+# Don't ignore skill files inside .claude/.windsurf — those are distributable
+# (the root SKILL.md was deleted, this line kept for safety)
+/SKILL.md
