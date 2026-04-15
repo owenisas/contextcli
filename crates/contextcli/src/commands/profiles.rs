@@ -1,6 +1,7 @@
 use crate::output;
 use contextcli_core::AppContext;
 use contextcli_core::error::Result;
+use contextcli_core::jwt;
 
 pub fn run(ctx: &AppContext, app: &str) -> Result<()> {
     let adapter = ctx.registry.get(app)?;
@@ -26,9 +27,17 @@ pub fn run(ctx: &AppContext, app: &str) -> Result<()> {
 
         let auth_warn = if p.needs_keychain_auth { " ⚠ needs keychain auth" } else { "" };
 
+        // Token expiry info
+        let expiry_info = match p.token_expires_at {
+            Some(exp) if jwt::is_expired(exp) => format!(" 🔴 {}", jwt::format_expiry(exp)),
+            Some(exp) if jwt::expires_within_days(exp, 7) => format!(" 🟡 {}", jwt::format_expiry(exp)),
+            Some(exp) => format!(" {}", jwt::format_expiry(exp)),
+            None => String::new(),
+        };
+
         eprintln!(
-            "  {}{} — {}{}{}",
-            p.profile_name, default_marker, status, user, auth_warn
+            "  {}{} — {}{}{}{}",
+            p.profile_name, default_marker, status, user, auth_warn, expiry_info
         );
 
         if p.needs_keychain_auth {
@@ -37,6 +46,10 @@ pub fn run(ctx: &AppContext, app: &str) -> Result<()> {
                 app, p.profile_name
             );
             eprintln!("      then click \"Always Allow\" — never prompted again");
+        }
+
+        if let Some(ref validated) = p.last_validated_at {
+            eprintln!("    last validated: {validated}");
         }
     }
 

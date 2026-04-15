@@ -1,6 +1,7 @@
 pub mod adapter;
 pub mod db;
 pub mod error;
+pub mod jwt;
 pub mod profile;
 pub mod project;
 pub mod router;
@@ -67,12 +68,35 @@ impl AppContext {
 
             // Auto-import existing native credentials if binary found and no profiles yet
             if binary_found {
-                let profiles = profile_manager.list_profiles(adapter.id()).unwrap_or_default();
-                if profiles.is_empty() {
+                let existing_profiles = profile_manager.list_profiles(adapter.id()).unwrap_or_default();
+                if existing_profiles.is_empty() {
+                    // Collect existing identities to deduplicate across import methods
+                    let existing_identities: std::collections::HashSet<String> =
+                        existing_profiles.iter()
+                            .filter_map(|p| p.auth_user.clone())
+                            .collect();
+
                     match adapter.import_all_accounts() {
                         Ok(accounts) if !accounts.is_empty() => {
                             let mut first = true;
+                            let mut imported = 0usize;
                             for (profile_name, creds) in &accounts {
+                                // Skip if a profile with the same identity already exists
+                                if let Some(ref identity) = creds.identity {
+                                    if existing_identities.contains(identity) {
+                                        tracing::debug!(
+                                            "skipping duplicate {} account: {}",
+                                            adapter.display_name(),
+                                            identity
+                                        );
+                                        continue;
+                                    }
+                                }
+                                // Skip if a profile with the same name already exists
+                                if profile_manager.profile_exists(adapter.id(), profile_name) {
+                                    continue;
+                                }
+
                                 if let Ok(profile) = profile_manager.create_profile(
                                     adapter.id(),
                                     profile_name,
@@ -100,13 +124,16 @@ impl AppContext {
                                         "auto_import",
                                         creds.identity.as_deref(),
                                     );
+                                    imported += 1;
                                 }
                             }
-                            tracing::info!(
-                                "auto-imported {} {} account(s)",
-                                accounts.len(),
-                                adapter.display_name()
-                            );
+                            if imported > 0 {
+                                tracing::info!(
+                                    "auto-imported {} {} account(s)",
+                                    imported,
+                                    adapter.display_name()
+                                );
+                            }
                         }
                         Ok(_) => {}
                         Err(e) => {

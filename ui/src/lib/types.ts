@@ -23,6 +23,10 @@ export interface Profile {
   updated_at: string;
   /** True when the credential requires one-time macOS Keychain authorization. */
   needs_keychain_auth: boolean;
+  /** Unix timestamp when the token expires (from JWT exp claim). Null if unknown. */
+  token_expires_at: number | null;
+  /** ISO 8601 timestamp of the last successful validation. */
+  last_validated_at: string | null;
 }
 
 export interface ValidationResult {

@@ -247,7 +247,7 @@ unsafe fn make_any_app_access() -> Option<SecAccessRef> {
     // Wrap in CFType (takes ownership of RC=1).
     // CFArray retains it (+1 → RC=2); CFType temp drops (-1 → RC=1 held by array).
     let trusted: CFArray<CFType> =
-        CFArray::from_CFTypes(&[CFType::wrap_under_create_rule(any_app as CFTypeRef)]);
+        CFArray::from_CFTypes(&[unsafe { CFType::wrap_under_create_rule(any_app as CFTypeRef) }]);
     // DO NOT CFRelease(any_app) — trusted owns that retain.
 
     let label = CFString::new("contextcli credential");

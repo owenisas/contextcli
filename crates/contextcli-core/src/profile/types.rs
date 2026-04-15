@@ -60,6 +60,13 @@ pub struct Profile {
     /// After the user grants access once, this becomes false permanently.
     #[serde(default)]
     pub needs_keychain_auth: bool,
+    /// Unix timestamp when the token expires (from JWT `exp` claim).
+    /// `None` if the token is not a JWT or has no `exp`.
+    #[serde(default)]
+    pub token_expires_at: Option<i64>,
+    /// ISO 8601 timestamp of the last successful validation.
+    #[serde(default)]
+    pub last_validated_at: Option<String>,
 }
 
 /// Reference to a secret stored in the vault.

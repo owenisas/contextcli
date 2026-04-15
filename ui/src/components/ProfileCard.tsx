@@ -1,6 +1,49 @@
 import type { Profile, ProjectLink } from "../lib/types";
 import StatusBadge from "./StatusBadge";
-import { useState } from "react";
+import { useState, useMemo } from "react";
+
+type ExpiryLevel = "ok" | "warning" | "danger" | "unknown";
+
+function getExpiryInfo(expiresAt: number | null): {
+  level: ExpiryLevel;
+  label: string;
+} {
+  if (expiresAt === null) return { level: "unknown", label: "" };
+
+  const now = Math.floor(Date.now() / 1000);
+  const diff = expiresAt - now;
+
+  if (diff <= 0) {
+    const ago = Math.abs(diff);
+    const label =
+      ago < 3600
+        ? `Expired ${Math.floor(ago / 60)}m ago`
+        : ago < 86400
+          ? `Expired ${Math.floor(ago / 3600)}h ago`
+          : `Expired ${Math.floor(ago / 86400)}d ago`;
+    return { level: "danger", label };
+  }
+
+  const label =
+    diff < 3600
+      ? `Expires in ${Math.floor(diff / 60)}m`
+      : diff < 86400
+        ? `Expires in ${Math.floor(diff / 3600)}h`
+        : `Expires in ${Math.floor(diff / 86400)}d`;
+
+  if (diff <= 7 * 86400) return { level: "warning", label };
+  return { level: "ok", label };
+}
+
+function formatRelativeTime(isoDate: string): string {
+  const then = new Date(isoDate + "Z").getTime();
+  const now = Date.now();
+  const diff = Math.floor((now - then) / 1000);
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
 
 interface ProfileCardProps {
   profile: Profile;
@@ -26,6 +69,11 @@ export default function ProfileCard({
   const [editing, setEditing] = useState(false);
   const [newName, setNewName] = useState(profile.profile_name);
   const [renameError, setRenameError] = useState<string | null>(null);
+
+  const expiry = useMemo(
+    () => getExpiryInfo(profile.token_expires_at),
+    [profile.token_expires_at]
+  );
 
   const handleValidate = async () => {
     setValidating(true);
@@ -130,8 +178,38 @@ export default function ProfileCard({
             )}
           </div>
         </div>
-        <StatusBadge state={profile.auth_state} />
+        <div className="flex flex-col items-end gap-1">
+          <StatusBadge state={profile.auth_state} />
+          {expiry.level !== "unknown" && (
+            <span
+              className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                expiry.level === "danger"
+                  ? "bg-danger/12 text-danger"
+                  : expiry.level === "warning"
+                    ? "bg-warning/12 text-warning"
+                    : "bg-accent/8 text-text-secondary"
+              }`}
+            >
+              {expiry.label}
+            </span>
+          )}
+        </div>
       </div>
+      {/* Token metadata row */}
+      {(profile.last_validated_at || expiry.level === "danger") && (
+        <div className="flex items-center gap-3 mt-2 text-[10px] text-text-secondary">
+          {profile.last_validated_at && (
+            <span title={profile.last_validated_at}>
+              Validated {formatRelativeTime(profile.last_validated_at)}
+            </span>
+          )}
+          {expiry.level === "danger" && (
+            <span className="text-danger font-medium">
+              Re-login required
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border">

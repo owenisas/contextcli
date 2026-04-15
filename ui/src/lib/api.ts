@@ -63,6 +63,8 @@ let mockProfiles: Record<string, Profile[]> = {
       created_at: "2025-01-01T00:00:00",
       updated_at: "2025-01-01T00:00:00",
       needs_keychain_auth: true,
+      token_expires_at: Math.floor(Date.now() / 1000) + 86400 * 3, // 3 days from now
+      last_validated_at: "2026-04-14T10:00:00",
     },
     {
       id: "2",
@@ -76,6 +78,8 @@ let mockProfiles: Record<string, Profile[]> = {
       created_at: "2025-01-01T00:00:00",
       updated_at: "2025-01-01T00:00:00",
       needs_keychain_auth: false,
+      token_expires_at: Math.floor(Date.now() / 1000) + 86400 * 30, // 30 days
+      last_validated_at: "2026-04-15T08:00:00",
     },
   ],
   gh: [
@@ -91,6 +95,8 @@ let mockProfiles: Record<string, Profile[]> = {
       created_at: "2025-01-01T00:00:00",
       updated_at: "2025-01-01T00:00:00",
       needs_keychain_auth: false,
+      token_expires_at: null,
+      last_validated_at: "2026-04-15T09:30:00",
     },
   ],
   supabase: [
@@ -106,6 +112,8 @@ let mockProfiles: Record<string, Profile[]> = {
       created_at: "2025-01-01T00:00:00",
       updated_at: "2025-01-01T00:00:00",
       needs_keychain_auth: false,
+      token_expires_at: Math.floor(Date.now() / 1000) - 86400, // expired yesterday
+      last_validated_at: null,
     },
   ],
 };
@@ -143,6 +151,8 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         needs_keychain_auth: false,
+        token_expires_at: null,
+        last_validated_at: null,
       };
       if (!mockProfiles[appId]) mockProfiles[appId] = [];
       mockProfiles[appId].push(newProfile);

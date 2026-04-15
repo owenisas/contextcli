@@ -3,7 +3,13 @@
 pub static MIGRATIONS: &[(u32, &str, &str)] = &[
     (1, "initial schema", MIGRATION_001),
     (2, "project links", MIGRATION_002),
+    (3, "token expiry tracking", MIGRATION_003),
 ];
+
+const MIGRATION_003: &str = r#"
+ALTER TABLE profiles ADD COLUMN token_expires_at INTEGER;
+ALTER TABLE profiles ADD COLUMN last_validated_at TEXT;
+"#;
 
 const MIGRATION_002: &str = r#"
 CREATE TABLE project_links (

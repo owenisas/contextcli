@@ -104,7 +104,8 @@ impl ProfileManager {
             let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
             conn.query_row(
                 "SELECT id, app_id, profile_name, label, is_default, auth_state,
-                        auth_user, config_dir, created_at, updated_at
+                        auth_user, config_dir, created_at, updated_at,
+                        token_expires_at, last_validated_at
                  FROM profiles WHERE app_id = ?1 AND profile_name = ?2",
                 params![app_id, profile_name],
                 |row| row_to_profile(row),
@@ -125,7 +126,8 @@ impl ProfileManager {
         let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.query_row(
             "SELECT id, app_id, profile_name, label, is_default, auth_state,
-                    auth_user, config_dir, created_at, updated_at
+                    auth_user, config_dir, created_at, updated_at,
+                    token_expires_at, last_validated_at
              FROM profiles WHERE app_id = ?1 AND is_default = 1",
             params![app_id],
             |row| row_to_profile(row),
@@ -140,7 +142,8 @@ impl ProfileManager {
             let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
             let mut stmt = conn.prepare(
                 "SELECT id, app_id, profile_name, label, is_default, auth_state,
-                        auth_user, config_dir, created_at, updated_at
+                        auth_user, config_dir, created_at, updated_at,
+                        token_expires_at, last_validated_at
                  FROM profiles WHERE app_id = ?1 ORDER BY profile_name",
             )?;
             stmt.query_map(params![app_id], |row| row_to_profile(row))?
@@ -263,6 +266,33 @@ impl ProfileManager {
         Ok(())
     }
 
+    /// Update the token expiry timestamp for a profile.
+    pub fn update_token_expiry(
+        &self,
+        app_id: &str,
+        profile_name: &str,
+        expires_at: Option<i64>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
+        conn.execute(
+            "UPDATE profiles SET token_expires_at = ?1, updated_at = datetime('now')
+             WHERE app_id = ?2 AND profile_name = ?3",
+            params![expires_at, app_id, profile_name],
+        )?;
+        Ok(())
+    }
+
+    /// Record the current time as the last successful validation.
+    pub fn update_last_validated_at(&self, app_id: &str, profile_name: &str) -> Result<()> {
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
+        conn.execute(
+            "UPDATE profiles SET last_validated_at = datetime('now'), updated_at = datetime('now')
+             WHERE app_id = ?1 AND profile_name = ?2",
+            params![app_id, profile_name],
+        )?;
+        Ok(())
+    }
+
     /// Delete a profile and its secrets.
     pub fn delete_profile(&self, app_id: &str, profile_name: &str) -> Result<()> {
         // Delete secrets from vault first
@@ -287,6 +317,7 @@ impl ProfileManager {
     // ── Secrets ──────────────────────────────────────────────
 
     /// Store a secret for a profile in the vault and record the reference.
+    /// If the secret is a JWT with an `exp` claim, the expiry is recorded.
     pub fn store_secret(
         &self,
         profile: &Profile,
@@ -314,6 +345,21 @@ impl ProfileManager {
                 account
             ],
         )?;
+        drop(conn);
+
+        // Best-effort JWT expiry detection for token secrets
+        if secret_key == "token" {
+            if let Some(exp) = crate::jwt::extract_jwt_expiry(secret_value.expose_secret()) {
+                let _ = self.update_token_expiry(&profile.app_id, &profile.profile_name, Some(exp));
+                tracing::debug!(
+                    "detected JWT expiry for {}/{}: {}",
+                    profile.app_id,
+                    profile.profile_name,
+                    crate::jwt::format_expiry(exp)
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -452,6 +498,8 @@ fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
         needs_keychain_auth: false, // annotated by ProfileManager after vault check
+        token_expires_at: row.get(10)?,
+        last_validated_at: row.get(11)?,
     })
 }
 

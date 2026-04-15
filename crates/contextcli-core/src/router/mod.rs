@@ -335,6 +335,8 @@ impl<'a> Router<'a> {
                 AuthState::Authenticated,
                 identity_to_store.as_deref(),
             )?;
+            // Record validation timestamp
+            let _ = self.profile_manager.update_last_validated_at(app_id, profile_name);
         } else {
             self.profile_manager.update_auth_state(
                 app_id,

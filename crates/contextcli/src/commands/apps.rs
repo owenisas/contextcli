@@ -1,6 +1,7 @@
 use crate::output;
 use contextcli_core::AppContext;
 use contextcli_core::error::Result;
+use contextcli_core::jwt;
 
 pub fn run(ctx: &AppContext) -> Result<()> {
     let apps = ctx.profile_manager.list_apps()?;
@@ -27,9 +28,25 @@ pub fn run(ctx: &AppContext) -> Result<()> {
             .map(|p| p.profile_name.as_str())
             .unwrap_or("none");
 
+        // Count expired / expiring-soon tokens
+        let expired_count = profiles.iter().filter(|p| {
+            p.token_expires_at.is_some_and(|exp| jwt::is_expired(exp))
+        }).count();
+        let expiring_count = profiles.iter().filter(|p| {
+            p.token_expires_at.is_some_and(|exp| !jwt::is_expired(exp) && jwt::expires_within_days(exp, 7))
+        }).count();
+
+        let mut expiry_warn = String::new();
+        if expired_count > 0 {
+            expiry_warn.push_str(&format!(" | 🔴 {} expired", expired_count));
+        }
+        if expiring_count > 0 {
+            expiry_warn.push_str(&format!(" | 🟡 {} expiring soon", expiring_count));
+        }
+
         eprintln!(
-            "  {} — {} | {} profile(s), default: {}",
-            app.display_name, binary_status, profile_count, default_name
+            "  {} — {} | {} profile(s), default: {}{}",
+            app.display_name, binary_status, profile_count, default_name, expiry_warn
         );
 
         // Show keychain auth warning per profile that needs it
@@ -43,6 +60,18 @@ pub fn run(ctx: &AppContext) -> Result<()> {
                 app.id, p.profile_name
             );
             eprintln!("       then click \"Always Allow\" — never prompted again");
+        }
+
+        // Show per-profile expiry warnings
+        for p in profiles.iter().filter(|p| p.token_expires_at.is_some()) {
+            let exp = p.token_expires_at.unwrap();
+            if jwt::is_expired(exp) || jwt::expires_within_days(exp, 7) {
+                let icon = if jwt::is_expired(exp) { "🔴" } else { "🟡" };
+                eprintln!(
+                    "    {}  {} — {}",
+                    icon, p.profile_name, jwt::format_expiry(exp)
+                );
+            }
         }
     }
 
