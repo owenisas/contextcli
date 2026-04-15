@@ -1,81 +1,99 @@
 //! macOS Keychain credential store.
 //!
-//! # The "always allow" problem — and the fix
+//! # The "so many dialogs" problem — root cause and fix
 //!
-//! `SecKeychainAddGenericPassword` attaches a **per-application ACL** to every
-//! item, keyed by the binary's code-signature hash.  macOS therefore shows
-//! *"contextcli wants to use your keychain"* once per item — and **again after
-//! every `cargo build`** because the binary hash changes.  With 7+ profiles
-//! the user can see 10+ prompts on every rebuild.
+//! ## What was wrong
 //!
-//! The fix: immediately after creating each item we call
-//! `SecKeychainItemSetAccess` with a `SecAccess` whose ACL contains a single
-//! **"any-application"** trusted entry (`SecTrustedApplicationCreateFromPath(NULL)`)
-//! with **no confirmation flag**.  Any process can then read the item silently,
-//! regardless of binary hash.
+//! The previous approach called `SecKeychainItemSetAccess` after storing each
+//! item to attach a permissive ACL.  This turned ONE store operation into FOUR
+//! dialogs:
 //!
-//! # Migration
+//!   1. "wants to use your confidential information"  (Always Allow ✓)
+//!   2. "wants to change access permissions"          (**password required** ✗)
+//!   3. "wants to access key 'contextcli'"            (Always Allow ✓)
+//!   4. "wants to change the owner"                   (**password required** ✗)
 //!
-//! Items stored before this change still carry the old per-app ACL.  On the
-//! first successful `retrieve` we delete and re-store the item, which gives it
-//! the permissive ACL.  The migration triggers the legacy prompt **exactly
-//! once** per item; after that the prompt never appears again.
+//! Dialogs 2 and 4 come from `SecKeychainItemSetAccess` and **can never be
+//! dismissed with Always Allow** — they require the login keychain password
+//! every single time.
+//!
+//! ## The fix
+//!
+//! Use `SecItemAdd` with `kSecAttrAccess` set to a `SecAccess` whose trusted
+//! list is an **empty CFArray** (= "any application is trusted, no
+//! confirmation needed").  This sets the permissive ACL at creation time so
+//! `SecKeychainItemSetAccess` is never called.
+//!
+//! Result per profile:
+//!   • New items:      0 dialogs ever
+//!   • Existing items: 1 "Always Allow" dialog on first read (migration),
+//!                     then 0 dialogs forever regardless of `cargo build`
+//!
+//! ## Migration
+//!
+//! On the first `retrieve` of an old-ACL item we try to silently delete it
+//! and re-store it with the new permissive ACL.  If the delete fails (item
+//! owned by a previous binary that no longer matches), we skip migration and
+//! return the bytes unchanged — no password prompts are ever generated.
 
 use crate::error::{Error, Result};
 use crate::vault::CredentialStore;
 use core_foundation::array::CFArray;
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::boolean::CFBoolean;
+use core_foundation::data::CFData;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::string::CFString;
 use core_foundation_sys::base::{CFRelease, CFTypeRef, OSStatus};
-use security_framework_sys::base::{SecKeychainItemRef, SecKeychainRef};
 use security_framework_sys::item::{
     kSecAttrAccount, kSecAttrService, kSecClass, kSecClassGenericPassword, kSecReturnData,
+    kSecValueData,
 };
-use security_framework_sys::keychain::SecKeychainAddGenericPassword;
 use std::ffi::c_void;
 use std::ptr;
 
 // OSStatus codes
 const ERR_SEC_SUCCESS: OSStatus = 0;
 const ERR_SEC_ITEM_NOT_FOUND: OSStatus = -25300;
-/// Returned by SecItemCopyMatching when the item exists but requires user
-/// interaction (dialog) that we suppressed with kSecUseAuthenticationUIFail.
+/// Returned when the item exists but requires user interaction that we
+/// suppressed with kSecUseAuthenticationUI = "fail".
 const ERR_SEC_INTERACTION_NOT_ALLOWED: OSStatus = -25315;
 
-// ── FFI declarations not exported by security-framework-sys ──────────────
+// ── FFI declarations not in security-framework-sys ───────────────────────
 
 type SecAccessRef = *mut c_void;
-type SecTrustedApplicationRef = *mut c_void;
 
 #[link(name = "Security", kind = "framework")]
 unsafe extern "C" {
-    /// Create a `SecAccess` with a given trusted-application list.
-    /// An **empty** `CFArray` (not NULL) means "any application is trusted".
+    /// Create a `SecAccess` with a trusted-application list.
+    /// **Empty `CFArray`** (not NULL) = any application trusted, no confirmation.
     fn SecAccessCreate(
         descriptor: core_foundation_sys::string::CFStringRef,
         trustedlist: core_foundation_sys::array::CFArrayRef,
         access: *mut SecAccessRef,
     ) -> OSStatus;
 
-    /// Create a trusted-application token.  `path = NULL` → "any application".
-    fn SecTrustedApplicationCreateFromPath(
-        path: *const std::ffi::c_char,
-        app: *mut SecTrustedApplicationRef,
+    /// Add a new keychain item.  Accepts `kSecAttrAccess` to set the ACL at
+    /// creation time — this is the key to avoiding `SecKeychainItemSetAccess`.
+    fn SecItemAdd(
+        attributes: core_foundation_sys::dictionary::CFDictionaryRef,
+        result: *mut CFTypeRef,
     ) -> OSStatus;
 
-    /// Attach an access-control object to a keychain item.
-    fn SecKeychainItemSetAccess(itemRef: SecKeychainItemRef, access: SecAccessRef) -> OSStatus;
-
-    /// Query the keychain without triggering any UI.
+    /// Query the keychain.  With `kSecUseAuthenticationUI = "fail"` this
+    /// returns `errSecInteractionNotAllowed` instead of showing a dialog when
+    /// the item exists but the caller is not in its ACL.
     fn SecItemCopyMatching(
         query: core_foundation_sys::dictionary::CFDictionaryRef,
-        result: *mut core_foundation_sys::base::CFTypeRef,
+        result: *mut CFTypeRef,
     ) -> OSStatus;
 
-    /// Key for controlling whether SecItemCopyMatching may show UI.
-    /// Value: "fail" → return errSecInteractionNotAllowed instead of prompting.
+    /// Keychain item attribute whose value is a `SecAccessRef` — sets ACL at
+    /// creation time when passed to `SecItemAdd`.
+    static kSecAttrAccess: core_foundation_sys::string::CFStringRef;
+
+    /// Controls whether `SecItemCopyMatching` may show UI.
+    /// String value "fail" → return `errSecInteractionNotAllowed` instead.
     static kSecUseAuthenticationUI: core_foundation_sys::string::CFStringRef;
 }
 
@@ -91,34 +109,59 @@ impl KeychainStore {
 
 impl CredentialStore for KeychainStore {
     fn store(&self, service: &str, account: &str, secret: &[u8]) -> Result<()> {
-        // Clean slate: remove any existing item first (handles old-ACL and new-ACL items).
+        // Remove any existing item first (old-ACL or new-ACL).
         let _ = self.delete(service, account);
 
         unsafe {
-            let mut item_ref: SecKeychainItemRef = ptr::null_mut();
-            let status = SecKeychainAddGenericPassword(
-                ptr::null_mut() as SecKeychainRef, // default keychain
-                service.len() as u32,
-                service.as_ptr() as *const _,
-                account.len() as u32,
-                account.as_ptr() as *const _,
-                secret.len() as u32,
-                secret.as_ptr() as *const _,
-                &mut item_ref,
+            // Build a permissive SecAccess: empty trusted list = any app, no prompt.
+            let label = CFString::new("contextcli credential");
+            let empty_trusted: CFArray<CFType> = CFArray::from_CFTypes(&[]);
+            let mut access: SecAccessRef = ptr::null_mut();
+            let sa = SecAccessCreate(
+                label.as_concrete_TypeRef(),
+                empty_trusted.as_concrete_TypeRef() as _,
+                &mut access,
             );
+            if sa != ERR_SEC_SUCCESS || access.is_null() {
+                tracing::warn!("SecAccessCreate failed ({sa}); storing without permissive ACL");
+                return store_legacy(service, account, secret);
+            }
+
+            // Wrap access into a CFType so the dictionary manages its lifetime.
+            let cf_access = CFType::wrap_under_create_rule(access as CFTypeRef);
+            let data = CFData::from_buffer(secret);
+
+            let query = CFDictionary::<CFType, CFType>::from_CFType_pairs(&[
+                (
+                    CFString::wrap_under_get_rule(kSecClass).as_CFType(),
+                    CFString::wrap_under_get_rule(kSecClassGenericPassword).as_CFType(),
+                ),
+                (
+                    CFString::wrap_under_get_rule(kSecAttrService).as_CFType(),
+                    CFString::new(service).as_CFType(),
+                ),
+                (
+                    CFString::wrap_under_get_rule(kSecAttrAccount).as_CFType(),
+                    CFString::new(account).as_CFType(),
+                ),
+                (
+                    CFString::wrap_under_get_rule(kSecValueData).as_CFType(),
+                    data.as_CFType(),
+                ),
+                (
+                    // Set permissive ACL at creation time — no SecKeychainItemSetAccess needed.
+                    CFString::wrap_under_get_rule(kSecAttrAccess).as_CFType(),
+                    cf_access.as_CFType(),
+                ),
+            ]);
+
+            let status = SecItemAdd(query.as_concrete_TypeRef() as _, ptr::null_mut());
             if status != ERR_SEC_SUCCESS {
                 return Err(Error::Vault(format!(
                     "keychain store failed (OSStatus {status})"
                 )));
             }
-
-            // Attach a permissive ACL: any app can read without prompting.
-            make_any_app_access(item_ref);
-
-            // SecKeychainAddGenericPassword returns a +1-retained ref; release it.
-            if !item_ref.is_null() {
-                CFRelease(item_ref as CFTypeRef);
-            }
+            // cf_access, data, query all drop here — CFDictionary releases access.
         }
         Ok(())
     }
@@ -129,11 +172,15 @@ impl CredentialStore for KeychainStore {
         let bytes = get_generic_password(service, account)
             .map_err(|e| Error::Vault(format!("keychain retrieve failed: {e}")))?;
 
-        // Re-store to silently migrate old-ACL items to the permissive ACL.
-        // After this first migration the re-store is a no-op from the user's
-        // perspective (no prompts, fast operation).
-        if self.store(service, account, &bytes).is_ok() {
-            tracing::debug!("refreshed keychain ACL for {service}/{account}");
+        // Migration: try to re-store with permissive ACL.
+        // We first delete the old item, then create a new one.  If delete fails
+        // (e.g. the item is owned by an older binary we can no longer impersonate)
+        // we skip silently — NO password prompts are generated either way.
+        use security_framework::passwords::delete_generic_password;
+        if delete_generic_password(service, account).is_ok() {
+            if self.store(service, account, &bytes).is_ok() {
+                tracing::debug!("migrated keychain ACL for {service}/{account}");
+            }
         }
 
         Ok(bytes)
@@ -148,14 +195,14 @@ impl CredentialStore for KeychainStore {
         }
     }
 
-    /// Silently checks whether the item requires a one-time user authorization.
+    /// Silently checks whether the item requires one-time user authorization.
     ///
-    /// Uses `SecItemCopyMatching` with `kSecUseAuthenticationUIFail` so macOS
-    /// returns `errSecInteractionNotAllowed` instead of showing a dialog.
-    /// Returns `true`  → item exists but locked behind the old per-app ACL.
-    /// Returns `false` → item is accessible, missing, or on an error.
+    /// Uses `SecItemCopyMatching` with `kSecUseAuthenticationUI = "fail"` so
+    /// macOS returns `errSecInteractionNotAllowed` instead of showing a dialog.
+    ///
+    /// `true`  → item exists but is locked behind an old per-app ACL.
+    /// `false` → item is accessible, missing, or on any error.
     fn needs_auth(&self, service: &str, account: &str) -> bool {
-        // "fail" is the documented string value of kSecUseAuthenticationUIFail.
         let ui_fail = CFString::new("fail");
 
         let query = CFDictionary::<CFType, CFType>::from_CFType_pairs(&[
@@ -182,12 +229,8 @@ impl CredentialStore for KeychainStore {
         ]);
 
         let mut result: CFTypeRef = ptr::null_mut();
-        let status = unsafe {
-            SecItemCopyMatching(
-                query.as_concrete_TypeRef() as _,
-                &mut result,
-            )
-        };
+        let status =
+            unsafe { SecItemCopyMatching(query.as_concrete_TypeRef() as _, &mut result) };
         if !result.is_null() {
             unsafe { CFRelease(result) };
         }
@@ -196,64 +239,37 @@ impl CredentialStore for KeychainStore {
     }
 }
 
-// ── ACL helper ────────────────────────────────────────────────────────────
+// ── Fallback ──────────────────────────────────────────────────────────────
 
-/// Attach an access object to `item_ref` that allows **any application** to
-/// read the item without user confirmation.
-///
-/// Steps:
-/// 1. `SecTrustedApplicationCreateFromPath(NULL)` → "any app" sentinel
-/// 2. `SecAccessCreate(label, [any_app_sentinel])` → access with one entry
-/// 3. `SecKeychainItemSetAccess(item_ref, access)` → attach it
-///
-/// Errors are non-fatal (logged only).  If this step fails the item still
-/// exists with the default single-app ACL — the legacy prompt behaviour.
-unsafe fn make_any_app_access(item_ref: SecKeychainItemRef) {
-    if item_ref.is_null() {
-        return;
-    }
+/// Store using the legacy API without a permissive ACL.  Used only when
+/// `SecAccessCreate` fails (should be extremely rare).  Items stored this way
+/// will prompt once per new binary hash, but never generate password dialogs.
+unsafe fn store_legacy(service: &str, account: &str, secret: &[u8]) -> Result<()> {
+    use security_framework_sys::base::SecKeychainRef;
+    use security_framework_sys::keychain::SecKeychainAddGenericPassword;
 
-    // Step 1: "any application" trusted-application reference
-    let mut any_app: SecTrustedApplicationRef = ptr::null_mut();
-    let s1 = unsafe { SecTrustedApplicationCreateFromPath(ptr::null(), &mut any_app) };
-    if s1 != ERR_SEC_SUCCESS || any_app.is_null() {
-        tracing::warn!("SecTrustedApplicationCreateFromPath failed: {s1}");
-        return;
-    }
-
-    // Step 2: build CFArray([any_app]) and create the access
-    let trusted: CFArray<CFType> = unsafe {
-        CFArray::from_CFTypes(&[CFType::wrap_under_create_rule(any_app as CFTypeRef)])
-    };
-    let label = CFString::new("contextcli credential");
-    let mut access: SecAccessRef = ptr::null_mut();
-    let s2 = unsafe {
-        SecAccessCreate(
-            label.as_concrete_TypeRef(),
-            trusted.as_concrete_TypeRef() as _,
-            &mut access,
+    let mut item_ref: security_framework_sys::base::SecKeychainItemRef = ptr::null_mut();
+    let status = unsafe {
+        SecKeychainAddGenericPassword(
+            ptr::null_mut() as SecKeychainRef,
+            service.len() as u32,
+            service.as_ptr() as *const _,
+            account.len() as u32,
+            account.as_ptr() as *const _,
+            secret.len() as u32,
+            secret.as_ptr() as *const _,
+            &mut item_ref,
         )
     };
-    if s2 != ERR_SEC_SUCCESS || access.is_null() {
-        tracing::warn!("SecAccessCreate failed: {s2}");
-        // `trusted` (CFArray) already holds the only retain on `any_app`; it will
-        // release it when dropped here — no manual CFRelease needed.
-        return;
+    if !item_ref.is_null() {
+        unsafe { CFRelease(item_ref as CFTypeRef) };
     }
-
-    // Step 3: attach the permissive access to the item
-    let s3 = unsafe { SecKeychainItemSetAccess(item_ref, access) };
-    if s3 != ERR_SEC_SUCCESS {
-        tracing::warn!("SecKeychainItemSetAccess failed: {s3}");
+    if status != ERR_SEC_SUCCESS {
+        return Err(Error::Vault(format!(
+            "keychain store (legacy) failed (OSStatus {status})"
+        )));
     }
-
-    unsafe {
-        CFRelease(access as CFTypeRef);
-        // `trusted` (CFArray) owns the `any_app` retain and will CFRelease it
-        // when `trusted` is dropped at the end of this function — do NOT release
-        // `any_app` manually or the retain count goes to zero while the array
-        // still holds a reference (→ SIGSEGV).
-    }
+    Ok(())
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────
