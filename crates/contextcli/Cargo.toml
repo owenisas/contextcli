@@ -1,0 +1,17 @@
+[package]
+name = "contextcli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "contextcli"
+path = "src/main.rs"
+
+[dependencies]
+contextcli-core = { path = "../contextcli-core" }
+clap.workspace = true
+colored.workspace = true
+which.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

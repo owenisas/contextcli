@@ -1,0 +1,22 @@
+{
+  "productName": "ContextCLI",
+  "version": "0.1.0",
+  "identifier": "com.contextcli.app",
+  "build": {
+    "frontendDist": "../ui/dist",
+    "beforeBuildCommand": "cd ../ui && pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "ContextCLI",
+        "width": 900,
+        "height": 650,
+        "center": true,
+        "resizable": true,
+        "minWidth": 700,
+        "minHeight": 500
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+# Rust
+/target
+
+# Frontend
+/ui/node_modules
+/ui/dist
+
+# Distribution
+/dist
+
+# OS
+.DS_Store
+*.swp
+*.swo
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+/src-tauri/gen/
+*.tsbuildinfo
+.pnpmcfg.json

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ContextCLI</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      window.onerror = function(msg, src, line, col, err) {
+        document.body.style.background = '#0a0a0a';
+        document.body.style.color = '#ef4444';
+        document.body.style.padding = '20px';
+        document.body.style.fontFamily = 'monospace';
+        document.getElementById('root').innerHTML =
+          '<h2>JS Error</h2><pre>' + msg + '\n' + (err ? err.stack : '') + '</pre>';
+      };
+      window.onunhandledrejection = function(e) {
+        document.body.style.background = '#0a0a0a';
+        document.body.style.color = '#ef4444';
+        document.body.style.padding = '20px';
+        document.body.style.fontFamily = 'monospace';
+        document.getElementById('root').innerHTML =
+          '<h2>Unhandled Promise Rejection</h2><pre>' + e.reason + '</pre>';
+      };
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
