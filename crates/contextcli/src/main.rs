@@ -102,6 +102,63 @@ enum Commands {
     Apps,
 }
 
+/// Split raw argv into (contextcli_args, forward_args).
+///
+/// When `--app` is present and the remaining args don't start with a known
+/// contextcli subcommand, everything that isn't `--app VALUE` or
+/// `--profile VALUE` is collected as forward args *before* clap sees them.
+/// This lets single-dash flags like `-help`, `-v`, `-e` pass through
+/// unmodified instead of being shredded into short-flag bundles by clap.
+fn preprocess_args(mut raw: Vec<String>) -> (Vec<String>, Vec<String>) {
+    // Known contextcli subcommands — these stay on the clap side.
+    const SUBCOMMANDS: &[&str] = &[
+        "login", "logout", "profiles", "default", "shell", "doctor",
+        "import", "link", "unlink", "project", "rename", "apps",
+        "help", "--help", "-h", "--version", "-V",
+    ];
+
+    // Check if --app is present at all.
+    let has_app = raw.iter().any(|a| a == "--app");
+    if !has_app {
+        return (raw, vec![]);
+    }
+
+    // Check if a known subcommand is present — if so, clap handles everything.
+    let has_subcommand = raw
+        .iter()
+        .any(|a| SUBCOMMANDS.contains(&a.as_str()) && !a.starts_with('-'));
+    if has_subcommand {
+        return (raw, vec![]);
+    }
+
+    // Forwarding mode: extract --app, --profile (and their values) for clap;
+    // everything else becomes forward_args that bypass clap entirely.
+    let mut cli_args = vec![raw.remove(0)]; // keep argv[0] (program name)
+    let mut forward_args: Vec<String> = vec![];
+    let mut i = 0;
+
+    while i < raw.len() {
+        let arg = &raw[i];
+        if arg == "--app" || arg == "--profile" {
+            cli_args.push(raw[i].clone());
+            i += 1;
+            if i < raw.len() {
+                cli_args.push(raw[i].clone());
+            }
+        } else if arg == "--" {
+            // Explicit separator: everything after goes to forward_args.
+            i += 1;
+            forward_args.extend(raw[i..].iter().cloned());
+            break;
+        } else {
+            forward_args.push(raw[i].clone());
+        }
+        i += 1;
+    }
+
+    (cli_args, forward_args)
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -111,7 +168,15 @@ fn main() {
         .with_target(false)
         .init();
 
-    let cli = Cli::parse();
+    let raw: Vec<String> = std::env::args().collect();
+    let (cli_args, pre_forward) = preprocess_args(raw);
+
+    let mut cli = Cli::parse_from(cli_args);
+
+    // Merge pre-extracted forward args (they bypass clap's flag parser).
+    if !pre_forward.is_empty() {
+        cli.forward_args = pre_forward;
+    }
 
     let ctx = match AppContext::init() {
         Ok(ctx) => ctx,
@@ -139,7 +204,6 @@ fn main() {
         Some(Commands::Project) => commands::link::show(),
         Some(Commands::Apps) => commands::apps::run(&ctx),
         None => {
-            // Forwarding mode: --app required
             match cli.app {
                 Some(app) => {
                     commands::forward::run(&ctx, &app, cli.profile.as_deref(), &cli.forward_args)
