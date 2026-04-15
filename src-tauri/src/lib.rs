@@ -147,8 +147,28 @@ fn rename_profile(
         .map_err(|e| e.to_string())
 }
 
+/// Validate that a path is safe to open: absolute, exists, within home directory.
+fn validate_open_path(path: &str) -> CmdResult<()> {
+    let p = std::path::Path::new(path);
+    if !p.is_absolute() {
+        return Err("path must be absolute".to_string());
+    }
+    if !p.exists() {
+        return Err(format!("path does not exist: {}", path));
+    }
+    let canonical = std::fs::canonicalize(p).map_err(|e| e.to_string())?;
+    let home = std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| "cannot determine home directory".to_string())?;
+    if !canonical.starts_with(&home) {
+        return Err("path is outside home directory".to_string());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn open_directory(path: String) -> CmdResult<()> {
+    validate_open_path(&path)?;
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
@@ -168,6 +188,7 @@ fn open_directory(path: String) -> CmdResult<()> {
 
 #[tauri::command]
 fn open_terminal_at(path: String) -> CmdResult<()> {
+    validate_open_path(&path)?;
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")

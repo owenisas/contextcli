@@ -77,7 +77,7 @@ impl<'a> Router<'a> {
             });
         }
 
-        // 4. Hydrate secrets from vault
+        // 6. Hydrate secrets from vault
         let mut secrets = HashMap::new();
         for field in adapter.credential_fields() {
             if field.sensitive {
@@ -91,18 +91,18 @@ impl<'a> Router<'a> {
             secrets,
         };
 
-        // 5. Ask adapter to prepare invocation env
+        // 7. Ask adapter to prepare invocation env
         let invocation = adapter.prepare_env(&resolved)?;
 
-        // 6. Find binary
+        // 8. Find binary
         let binary_name = adapter.binary_name();
         let binary = which::which(binary_name)
             .map_err(|_| Error::BinaryNotFound(binary_name.to_string()))?;
 
-        // 7. Launch
+        // 9. Launch
         let status = launcher::spawn(&binary, &invocation, forward_args)?;
 
-        // 8. Log activity (no secrets)
+        // 10. Log activity (no secrets)
         let _ = self.profile_manager.log_activity(
             app_id,
             Some(&profile.id),
@@ -115,6 +115,7 @@ impl<'a> Router<'a> {
 
     /// Perform login for a profile.
     pub fn login(&self, app_id: &str, profile_name: &str) -> Result<()> {
+        crate::profile::validate_profile_name(profile_name)?;
         let adapter = self.registry.get(app_id)?;
 
         // Ensure app is registered
@@ -185,6 +186,7 @@ impl<'a> Router<'a> {
     /// Import existing credentials from the native CLI's config.
     /// Creates a profile and stores the found credentials.
     pub fn import(&self, app_id: &str, profile_name: &str) -> Result<bool> {
+        crate::profile::validate_profile_name(profile_name)?;
         let adapter = self.registry.get(app_id)?;
 
         // Ensure app registered

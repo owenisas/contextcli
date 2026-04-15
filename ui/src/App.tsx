@@ -21,11 +21,14 @@ export default function App() {
       if (loadedApps.length > 0 && !selectedAppId) {
         setSelectedAppId(loadedApps[0].id);
       }
-      // Load all profiles
-      for (const app of loadedApps) {
-        const profiles = await api.listProfiles(app.id);
-        setProfilesMap((prev) => ({ ...prev, [app.id]: profiles }));
-      }
+      // Load all profiles in parallel
+      const profileEntries = await Promise.all(
+        loadedApps.map(async (app) => {
+          const profiles = await api.listProfiles(app.id);
+          return [app.id, profiles] as const;
+        })
+      );
+      setProfilesMap(Object.fromEntries(profileEntries));
     } catch (e) {
       setError(String(e));
     }

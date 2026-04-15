@@ -2,6 +2,7 @@ class Contextcli < Formula
   desc "Universal CLI profile launcher — run any dev CLI under a named auth profile"
   homepage "https://github.com/owenisas/contextcli"
   license "MIT"
+  version "0.1.0"
 
   on_arm do
     url "https://github.com/owenisas/contextcli/releases/download/v#{version}/contextcli-v#{version}-aarch64-apple-darwin.tar.gz"

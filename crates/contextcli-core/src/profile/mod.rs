@@ -28,7 +28,7 @@ impl ProfileManager {
         adapter_version: &str,
         support_level: &str,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.execute(
             "INSERT INTO apps (id, display_name, adapter_version, support_level)
              VALUES (?1, ?2, ?3, ?4)
@@ -44,7 +44,7 @@ impl ProfileManager {
 
     /// Update the detected binary path for an app.
     pub fn update_binary_path(&self, app_id: &str, path: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.execute(
             "UPDATE apps SET binary_path = ?1, updated_at = datetime('now') WHERE id = ?2",
             params![path, app_id],
@@ -54,7 +54,7 @@ impl ProfileManager {
 
     /// List all registered apps.
     pub fn list_apps(&self) -> Result<Vec<App>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT id, display_name, binary_path, adapter_version, support_level,
                     created_at, updated_at
@@ -85,8 +85,9 @@ impl ProfileManager {
         profile_name: &str,
         label: Option<&str>,
     ) -> Result<Profile> {
+        validate_profile_name(profile_name)?;
         let id = uuid::Uuid::new_v4().to_string();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.execute(
             "INSERT INTO profiles (id, app_id, profile_name, label)
              VALUES (?1, ?2, ?3, ?4)",
@@ -98,13 +99,13 @@ impl ProfileManager {
 
     /// Get a profile by app_id + profile_name.
     pub fn get_profile(&self, app_id: &str, profile_name: &str) -> Result<Profile> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.query_row(
             "SELECT id, app_id, profile_name, label, is_default, auth_state,
                     auth_user, config_dir, created_at, updated_at
              FROM profiles WHERE app_id = ?1 AND profile_name = ?2",
             params![app_id, profile_name],
-            |row| Ok(row_to_profile(row)),
+            |row| row_to_profile(row),
         )
         .map_err(|_| Error::ProfileNotFound {
             app_id: app_id.to_string(),
@@ -114,51 +115,52 @@ impl ProfileManager {
 
     /// Get the default profile for an app.
     pub fn get_default_profile(&self, app_id: &str) -> Result<Profile> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.query_row(
             "SELECT id, app_id, profile_name, label, is_default, auth_state,
                     auth_user, config_dir, created_at, updated_at
              FROM profiles WHERE app_id = ?1 AND is_default = 1",
             params![app_id],
-            |row| Ok(row_to_profile(row)),
+            |row| row_to_profile(row),
         )
         .map_err(|_| Error::NoDefaultProfile(app_id.to_string()))
     }
 
     /// List all profiles for an app.
     pub fn list_profiles(&self, app_id: &str) -> Result<Vec<Profile>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT id, app_id, profile_name, label, is_default, auth_state,
                     auth_user, config_dir, created_at, updated_at
              FROM profiles WHERE app_id = ?1 ORDER BY profile_name",
         )?;
         let profiles = stmt
-            .query_map(params![app_id], |row| Ok(row_to_profile(row)))?
+            .query_map(params![app_id], |row| row_to_profile(row))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(profiles)
     }
 
     /// Set a profile as the default for its app (clears previous default).
     pub fn set_default(&self, app_id: &str, profile_name: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        // Clear existing default
-        conn.execute(
+        let mut conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
+        let tx = conn.transaction()?;
+        tx.execute(
             "UPDATE profiles SET is_default = 0 WHERE app_id = ?1 AND is_default = 1",
             params![app_id],
         )?;
-        // Set new default
-        let changed = conn.execute(
+        let changed = tx.execute(
             "UPDATE profiles SET is_default = 1, updated_at = datetime('now')
              WHERE app_id = ?1 AND profile_name = ?2",
             params![app_id, profile_name],
         )?;
         if changed == 0 {
+            // tx drops here → automatic rollback
             return Err(Error::ProfileNotFound {
                 app_id: app_id.to_string(),
                 profile_name: profile_name.to_string(),
             });
         }
+        tx.commit()?;
         Ok(())
     }
 
@@ -187,7 +189,7 @@ impl ProfileManager {
                 let _ = self.vault.delete(&sr.vault_service, &sr.vault_account);
 
                 // Update secret_ref row
-                let conn = self.conn.lock().unwrap();
+                let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
                 let _ = conn.execute(
                     "UPDATE secret_refs SET vault_account = ?1 WHERE id = ?2",
                     params![new_account, sr.id],
@@ -196,7 +198,7 @@ impl ProfileManager {
         }
 
         // Update profile row
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.execute(
             "UPDATE profiles SET profile_name = ?1, updated_at = datetime('now')
              WHERE app_id = ?2 AND profile_name = ?3",
@@ -221,7 +223,7 @@ impl ProfileManager {
         state: AuthState,
         auth_user: Option<&str>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.execute(
             "UPDATE profiles SET auth_state = ?1, auth_user = ?2, updated_at = datetime('now')
              WHERE app_id = ?3 AND profile_name = ?4",
@@ -237,7 +239,7 @@ impl ProfileManager {
         profile_name: &str,
         config_dir: &str,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.execute(
             "UPDATE profiles SET config_dir = ?1, updated_at = datetime('now')
              WHERE app_id = ?2 AND profile_name = ?3",
@@ -254,7 +256,7 @@ impl ProfileManager {
             let _ = self.vault.delete(&sr.vault_service, &sr.vault_account);
         }
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.execute(
             "DELETE FROM profiles WHERE app_id = ?1 AND profile_name = ?2",
             params![app_id, profile_name],
@@ -282,7 +284,7 @@ impl ProfileManager {
 
         // Upsert secret_ref
         let ref_id = uuid::Uuid::new_v4().to_string();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.execute(
             "INSERT INTO secret_refs (id, profile_id, secret_key, vault_service, vault_account)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -311,7 +313,7 @@ impl ProfileManager {
 
     /// List secret refs for a profile.
     fn list_secret_refs(&self, app_id: &str, profile_name: &str) -> Result<Vec<SecretRef>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT sr.id, sr.profile_id, sr.secret_key, sr.vault_service, sr.vault_account
              FROM secret_refs sr
@@ -342,7 +344,7 @@ impl ProfileManager {
         action: &str,
         detail: Option<&str>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.execute(
             "INSERT INTO activity_log (profile_id, app_id, action, detail)
              VALUES (?1, ?2, ?3, ?4)",
@@ -360,7 +362,7 @@ impl ProfileManager {
         app_id: &str,
         profile_name: &str,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.execute(
             "INSERT INTO project_links (project_dir, app_id, profile_name)
              VALUES (?1, ?2, ?3)
@@ -373,7 +375,7 @@ impl ProfileManager {
 
     /// Remove a project link.
     pub fn remove_project_link(&self, project_dir: &str, app_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         conn.execute(
             "DELETE FROM project_links WHERE project_dir = ?1 AND app_id = ?2",
             params![project_dir, app_id],
@@ -383,7 +385,7 @@ impl ProfileManager {
 
     /// List all project links for an app.
     pub fn list_project_links(&self, app_id: &str) -> Result<Vec<ProjectLink>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().map_err(|_| Error::Other("mutex poisoned".to_string()))?;
         let mut stmt = conn.prepare(
             "SELECT project_dir, app_id, profile_name FROM project_links
              WHERE app_id = ?1 ORDER BY project_dir",
@@ -401,19 +403,40 @@ impl ProfileManager {
     }
 }
 
-fn row_to_profile(row: &rusqlite::Row) -> Profile {
-    Profile {
-        id: row.get(0).unwrap(),
-        app_id: row.get(1).unwrap(),
-        profile_name: row.get(2).unwrap(),
-        label: row.get(3).unwrap(),
-        is_default: row.get::<_, i32>(4).unwrap() != 0,
-        auth_state: AuthState::from_str(row.get::<_, String>(5).unwrap().as_str()),
-        auth_user: row.get(6).unwrap(),
-        config_dir: row.get(7).unwrap(),
-        created_at: row.get(8).unwrap(),
-        updated_at: row.get(9).unwrap(),
+/// Validate a profile name to prevent path traversal and injection.
+/// Allows alphanumeric, dash, underscore, and dot; no leading dot; max 64 chars.
+pub(crate) fn validate_profile_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(Error::Other("profile name cannot be empty".to_string()));
     }
+    if name.len() > 64 {
+        return Err(Error::Other("profile name too long (max 64 characters)".to_string()));
+    }
+    if name.starts_with('.') {
+        return Err(Error::Other("profile name cannot start with '.'".to_string()));
+    }
+    if !name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.') {
+        return Err(Error::Other(
+            "profile name may only contain alphanumeric characters, dashes, underscores, and dots"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn row_to_profile(row: &rusqlite::Row) -> rusqlite::Result<Profile> {
+    Ok(Profile {
+        id: row.get(0)?,
+        app_id: row.get(1)?,
+        profile_name: row.get(2)?,
+        label: row.get(3)?,
+        is_default: row.get::<_, i32>(4)? != 0,
+        auth_state: AuthState::from_str(row.get::<_, String>(5)?.as_str()),
+        auth_user: row.get(6)?,
+        config_dir: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
 }
 
 #[cfg(test)]

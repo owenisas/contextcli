@@ -10,6 +10,7 @@ use crate::adapter::types::{
 use crate::adapter::AppAdapter;
 use crate::error::{Error, Result};
 use secrecy::{ExposeSecret, SecretString};
+use serde_yaml;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -214,12 +215,16 @@ impl GenericAdapter {
         }
     }
 
-    /// Try to import from native config file (JSON)
+    /// Try to import from native config file (JSON or YAML)
     fn import_from_config_file(&self) -> Option<CapturedCredentials> {
         let path_str = self.def.native_config_path.as_ref()?;
         let path = expand_path(path_str);
         let content = std::fs::read_to_string(&path).ok()?;
-        let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+        let json: serde_json::Value = if path_str.ends_with(".yml") || path_str.ends_with(".yaml") {
+            serde_yaml::from_str(&content).ok()?
+        } else {
+            serde_json::from_str(&content).ok()?
+        };
 
         let key_path = self.def.native_token_key.as_deref().unwrap_or("token");
         let token = json_get_nested(&json, key_path)?.as_str()?;
@@ -332,7 +337,11 @@ impl GenericAdapter {
         let path_str = self.def.native_config_path.as_ref()?;
         let path = expand_path(path_str);
         let content = std::fs::read_to_string(&path).ok()?;
-        let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+        let json: serde_json::Value = if path_str.ends_with(".yml") || path_str.ends_with(".yaml") {
+            serde_yaml::from_str(&content).ok()?
+        } else {
+            serde_json::from_str(&content).ok()?
+        };
 
         let token_key = self.def.native_token_key.as_deref().unwrap_or("tokens.refresh_token");
         let identity_key = self.def.native_identity_key.as_deref().unwrap_or("user.email");
