@@ -105,6 +105,15 @@ export default function App() {
     [selectedAppId, refreshProfiles]
   );
 
+  const handleRename = useCallback(
+    async (oldName: string, newName: string) => {
+      if (!selectedAppId) return;
+      await api.renameProfile(selectedAppId, oldName, newName);
+      await refreshProfiles(selectedAppId);
+    },
+    [selectedAppId, refreshProfiles]
+  );
+
   const selectedApp = apps.find((a) => a.id === selectedAppId) ?? null;
   const selectedProfiles = selectedAppId ? profilesMap[selectedAppId] ?? [] : [];
   const selectedAdapterInfo = selectedAppId ? adapterInfoMap[selectedAppId] ?? null : null;
@@ -140,6 +149,7 @@ export default function App() {
             onValidate={handleValidate}
             onDelete={handleDelete}
             onLogout={handleLogout}
+            onRename={handleRename}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center text-text-secondary text-sm">

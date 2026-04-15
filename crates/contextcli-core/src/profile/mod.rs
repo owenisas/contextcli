@@ -162,6 +162,57 @@ impl ProfileManager {
         Ok(())
     }
 
+    /// Rename a profile. Updates DB, vault keys, and secret refs.
+    pub fn rename_profile(
+        &self,
+        app_id: &str,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<Profile> {
+        // Check old exists, new doesn't
+        let old_profile = self.get_profile(app_id, old_name)?;
+        if self.profile_exists(app_id, new_name) {
+            return Err(Error::Other(format!(
+                "profile '{new_name}' already exists for {app_id}"
+            )));
+        }
+
+        // Move secrets in vault: old key → new key
+        let refs = self.list_secret_refs(app_id, old_name)?;
+        for sr in &refs {
+            if let Ok(secret_bytes) = self.vault.retrieve(&sr.vault_service, &sr.vault_account) {
+                let new_account =
+                    vault::vault_account(app_id, new_name, &sr.secret_key);
+                let _ = self.vault.store(vault::VAULT_SERVICE, &new_account, &secret_bytes);
+                let _ = self.vault.delete(&sr.vault_service, &sr.vault_account);
+
+                // Update secret_ref row
+                let conn = self.conn.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE secret_refs SET vault_account = ?1 WHERE id = ?2",
+                    params![new_account, sr.id],
+                );
+            }
+        }
+
+        // Update profile row
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE profiles SET profile_name = ?1, updated_at = datetime('now')
+             WHERE app_id = ?2 AND profile_name = ?3",
+            params![new_name, app_id, old_name],
+        )?;
+
+        // Update project_links
+        let _ = conn.execute(
+            "UPDATE project_links SET profile_name = ?1 WHERE app_id = ?2 AND profile_name = ?3",
+            params![new_name, app_id, old_name],
+        );
+
+        drop(conn);
+        self.get_profile(app_id, new_name)
+    }
+
     /// Update auth state and identity for a profile.
     pub fn update_auth_state(
         &self,

@@ -211,6 +211,9 @@ export const api = {
   listProjectLinks: (appId: string) =>
     invoke<ProjectLink[]>("list_project_links", { appId }),
 
+  renameProfile: (appId: string, oldName: string, newName: string) =>
+    invoke<Profile>("rename_profile", { appId, oldName, newName }),
+
   openDirectory: (path: string) =>
     invoke<void>("open_directory", { path }),
 

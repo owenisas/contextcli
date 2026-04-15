@@ -89,6 +89,15 @@ enum Commands {
     },
     /// Show current project config (.contextcli.toml)
     Project,
+    /// Rename a profile
+    Rename {
+        #[arg(long)]
+        app: String,
+        #[arg(long)]
+        profile: String,
+        #[arg(long)]
+        to: String,
+    },
     /// List all registered apps
     Apps,
 }
@@ -122,6 +131,9 @@ fn main() {
         }
         Some(Commands::Doctor { app }) => commands::doctor::run(&ctx, &app),
         Some(Commands::Import { app, profile }) => commands::import::run(&ctx, &app, &profile),
+        Some(Commands::Rename { app, profile, to }) => {
+            commands::rename::run(&ctx, &app, &profile, &to)
+        }
         Some(Commands::Link { app, profile }) => commands::link::run(&ctx, &app, &profile),
         Some(Commands::Unlink { app }) => commands::link::unlink(&ctx, &app),
         Some(Commands::Project) => commands::link::show(),

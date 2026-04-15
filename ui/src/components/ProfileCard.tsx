@@ -9,6 +9,7 @@ interface ProfileCardProps {
   onValidate: () => Promise<void>;
   onDelete: () => void;
   onLogout: () => void;
+  onRename: (newName: string) => Promise<void>;
 }
 
 export default function ProfileCard({
@@ -18,9 +19,13 @@ export default function ProfileCard({
   onValidate,
   onDelete,
   onLogout,
+  onRename,
 }: ProfileCardProps) {
   const [validating, setValidating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [newName, setNewName] = useState(profile.profile_name);
+  const [renameError, setRenameError] = useState<string | null>(null);
 
   const handleValidate = async () => {
     setValidating(true);
@@ -28,6 +33,22 @@ export default function ProfileCard({
       await onValidate();
     } finally {
       setValidating(false);
+    }
+  };
+
+  const handleRename = async () => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === profile.profile_name) {
+      setEditing(false);
+      setNewName(profile.profile_name);
+      return;
+    }
+    setRenameError(null);
+    try {
+      await onRename(trimmed);
+      setEditing(false);
+    } catch (e) {
+      setRenameError(String(e));
     }
   };
 
@@ -41,13 +62,40 @@ export default function ProfileCard({
           </span>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-medium text-sm">{profile.profile_name}</span>
-              {profile.is_default && (
+              {editing ? (
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onBlur={handleRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleRename();
+                    if (e.key === "Escape") {
+                      setEditing(false);
+                      setNewName(profile.profile_name);
+                    }
+                  }}
+                  autoFocus
+                  className="font-medium text-sm bg-[#0a0a0a] border border-accent rounded px-1.5 py-0.5 text-text-primary focus:outline-none w-32"
+                />
+              ) : (
+                <span
+                  className="font-medium text-sm cursor-pointer hover:text-accent transition-colors"
+                  onClick={() => setEditing(true)}
+                  title="Click to rename"
+                >
+                  {profile.profile_name}
+                </span>
+              )}
+              {profile.is_default && !editing && (
                 <span className="text-[10px] text-text-secondary uppercase tracking-wide">
                   default
                 </span>
               )}
             </div>
+            {renameError && (
+              <div className="text-[10px] text-danger mt-0.5">{renameError}</div>
+            )}
             {profile.auth_user && (
               <div className="text-xs text-text-secondary mt-0.5">{profile.auth_user}</div>
             )}

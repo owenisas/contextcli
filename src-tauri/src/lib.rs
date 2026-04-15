@@ -135,6 +135,19 @@ fn import_profile(
 }
 
 #[tauri::command]
+fn rename_profile(
+    ctx: State<'_, Mutex<AppContext>>,
+    app_id: String,
+    old_name: String,
+    new_name: String,
+) -> CmdResult<Profile> {
+    let ctx = ctx.lock().map_err(|e| e.to_string())?;
+    ctx.profile_manager
+        .rename_profile(&app_id, &old_name, &new_name)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn open_directory(path: String) -> CmdResult<()> {
     #[cfg(target_os = "macos")]
     {
@@ -262,6 +275,7 @@ pub fn run() {
             trigger_logout,
             import_profile,
             list_project_links,
+            rename_profile,
             open_directory,
             open_terminal_at,
             check_cli_installed,

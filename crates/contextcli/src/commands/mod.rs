@@ -7,4 +7,5 @@ pub mod link;
 pub mod login;
 pub mod logout;
 pub mod profiles;
+pub mod rename;
 pub mod shell;

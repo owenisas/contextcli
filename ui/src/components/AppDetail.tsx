@@ -13,6 +13,7 @@ interface AppDetailProps {
   onValidate: (profileName: string) => Promise<void>;
   onDelete: (profileName: string) => Promise<void>;
   onLogout: (profileName: string) => Promise<void>;
+  onRename: (oldName: string, newName: string) => Promise<void>;
 }
 
 export default function AppDetail({
@@ -24,6 +25,7 @@ export default function AppDetail({
   onValidate,
   onDelete,
   onLogout,
+  onRename,
 }: AppDetailProps) {
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [projectLinks, setProjectLinks] = useState<ProjectLink[]>([]);
@@ -96,6 +98,7 @@ export default function AppDetail({
                 onValidate={() => onValidate(p.profile_name)}
                 onDelete={() => onDelete(p.profile_name)}
                 onLogout={() => onLogout(p.profile_name)}
+                onRename={(newName) => onRename(p.profile_name, newName)}
               />
             ))}
           </div>
