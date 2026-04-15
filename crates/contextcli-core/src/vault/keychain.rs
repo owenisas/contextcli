@@ -149,17 +149,16 @@ impl CredentialStore for KeychainStore {
     }
 
     fn retrieve(&self, service: &str, account: &str) -> Result<Vec<u8>> {
-        use security_framework::passwords::get_generic_password;
+        // Use SecItemCopyMatching (modern API) instead of get_generic_password
+        // (legacy SecKeychainFindGenericPassword).  The legacy API checks a
+        // per-binary ACL that triggers "Always Allow" prompts on every new
+        // cargo build.  SecItemCopyMatching respects the kSecAttrAccess we
+        // baked in at creation time — zero dialogs.
+        let bytes = unsafe { retrieve_via_sec_item(service, account) }?;
 
-        // This may show one "Always Allow" dialog for old-ACL items.
-        // After the user clicks Always Allow, migration below re-stores with
-        // the permissive ACL so the prompt never appears again.
-        let bytes = get_generic_password(service, account)
-            .map_err(|e| Error::Vault(format!("keychain retrieve failed: {e}")))?;
-
-        // Migration: delete old-ACL item and re-create with permissive ACL.
-        // If delete fails (item owned by a different binary), skip silently —
-        // no password prompts generated either way.
+        // Migration: if the item was stored with an old ACL (pre-permissive),
+        // delete and re-create with the permissive ACL.  Uses the legacy API
+        // for delete (which never prompts — no data access required).
         use security_framework::passwords::delete_generic_password;
         if delete_generic_password(service, account).is_ok() {
             if self.store(service, account, &bytes).is_ok() {
@@ -300,6 +299,54 @@ unsafe fn store_legacy(service: &str, account: &str, secret: &[u8]) -> Result<()
         )));
     }
     Ok(())
+}
+
+// ── Modern retrieve ──────────────────────────────────────────────────────
+
+/// Retrieve a keychain item using `SecItemCopyMatching` (modern API).
+///
+/// Unlike `SecKeychainFindGenericPassword`, this respects the `kSecAttrAccess`
+/// ACL baked in at creation time.  Items stored with the "any application"
+/// sentinel via `make_any_app_access()` are returned silently — no dialog,
+/// no "Always Allow", no password prompt.
+unsafe fn retrieve_via_sec_item(service: &str, account: &str) -> Result<Vec<u8>> {
+    let query = CFDictionary::<CFType, CFType>::from_CFType_pairs(&[
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecClass) }.as_CFType(),
+            unsafe { CFString::wrap_under_get_rule(kSecClassGenericPassword) }.as_CFType(),
+        ),
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecAttrService) }.as_CFType(),
+            CFString::new(service).as_CFType(),
+        ),
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecAttrAccount) }.as_CFType(),
+            CFString::new(account).as_CFType(),
+        ),
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecReturnData) }.as_CFType(),
+            CFBoolean::true_value().as_CFType(),
+        ),
+    ]);
+
+    let mut result: CFTypeRef = ptr::null_mut();
+    let status = unsafe { SecItemCopyMatching(query.as_concrete_TypeRef() as _, &mut result) };
+
+    if status == ERR_SEC_ITEM_NOT_FOUND {
+        return Err(Error::Vault("keychain item not found".to_string()));
+    }
+    if status != ERR_SEC_SUCCESS {
+        return Err(Error::Vault(format!(
+            "keychain retrieve failed (OSStatus {status})"
+        )));
+    }
+    if result.is_null() {
+        return Err(Error::Vault("keychain returned null data".to_string()));
+    }
+
+    // result is a CFDataRef when kSecReturnData = true
+    let cf_data = unsafe { CFData::wrap_under_create_rule(result as _) };
+    Ok(cf_data.to_vec())
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────
