@@ -236,31 +236,40 @@ impl GenericAdapter {
         Some(CapturedCredentials { fields, identity })
     }
 
-    /// Try to import from macOS Keychain
+    /// Try to import from macOS Keychain (macOS only, no-op on other platforms)
     fn import_from_keychain(&self) -> Option<CapturedCredentials> {
-        let service = self.def.native_keychain_service.as_ref()?;
-        let account = self.def.native_keychain_account.as_ref()?;
-
-        let raw = security_framework::passwords::get_generic_password(service, account).ok()?;
-        let raw_str = String::from_utf8(raw).ok()?;
-
-        let token = if self.def.native_keychain_go_base64 {
-            let b64 = raw_str.strip_prefix("go-keyring-base64:")?;
-            base64_decode(b64)?
-        } else {
-            raw_str
-        };
-
-        if token.is_empty() {
+        #[cfg(not(target_os = "macos"))]
+        {
             return None;
         }
 
-        let mut fields = HashMap::new();
-        fields.insert("token".to_string(), SecretString::from(token.clone()));
+        #[cfg(target_os = "macos")]
+        {
+            let service = self.def.native_keychain_service.as_ref()?;
+            let account = self.def.native_keychain_account.as_ref()?;
 
-        let identity = self.run_whoami_with_token(&token);
+            let raw =
+                security_framework::passwords::get_generic_password(service, account).ok()?;
+            let raw_str = String::from_utf8(raw).ok()?;
 
-        Some(CapturedCredentials { fields, identity })
+            let token = if self.def.native_keychain_go_base64 {
+                let b64 = raw_str.strip_prefix("go-keyring-base64:")?;
+                base64_decode(b64)?
+            } else {
+                raw_str
+            };
+
+            if token.is_empty() {
+                return None;
+            }
+
+            let mut fields = HashMap::new();
+            fields.insert("token".to_string(), SecretString::from(token.clone()));
+
+            let identity = self.run_whoami_with_token(&token);
+
+            Some(CapturedCredentials { fields, identity })
+        }
     }
 
     /// Try to import by running a command (e.g., `gh auth token`)

@@ -8,65 +8,113 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build macOS (${{ matrix.target }})
+  build-cli:
+    name: CLI — ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
-          - target: aarch64-apple-darwin
+          - name: macOS (Apple Silicon)
             runner: macos-14
-            arch: arm64
-          - target: x86_64-apple-darwin
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - name: macOS (Intel)
             runner: macos-13
-            arch: x64
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - name: Linux (x64)
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - name: Windows (x64)
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
+      - name: Build CLI
+        run: cargo build --release --target ${{ matrix.target }} -p contextcli
+
+      - name: Codesign (macOS)
+        if: runner.os == 'macOS'
+        run: codesign --force --sign - --identifier "com.contextcli.cli" target/${{ matrix.target }}/release/contextcli
+
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          tar -czf contextcli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
+            -C target/${{ matrix.target }}/release contextcli
+
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/contextcli.exe" `
+            -DestinationPath "contextcli-${{ github.ref_name }}-${{ matrix.target }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: contextcli-${{ github.ref_name }}-${{ matrix.target }}.*
+
+  build-gui:
+    name: GUI — ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - name: macOS (Apple Silicon)
+            runner: macos-14
+            target: aarch64-apple-darwin
+          - name: macOS (Intel)
+            runner: macos-13
+            target: x86_64-apple-darwin
+          - name: Linux (x64)
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: Windows (x64)
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: ui/pnpm-lock.yaml
 
-      # Build CLI
-      - name: Build CLI
-        run: cargo build --release --target ${{ matrix.target }} -p contextcli
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
 
-      # Build frontend
       - name: Build frontend
         working-directory: ui
         run: |
           pnpm install --frozen-lockfile
           pnpm build
 
-      # Build GUI
-      - name: Build GUI
-        run: cargo build --release --target ${{ matrix.target }} -p contextcli-gui
-
-      # Codesign
-      - name: Codesign binaries
+      - name: Build CLI + GUI
         run: |
-          codesign --force --sign - --identifier "com.contextcli.cli" target/${{ matrix.target }}/release/contextcli
-          codesign --force --sign - --identifier "com.contextcli.app" target/${{ matrix.target }}/release/contextcli-gui
+          cargo build --release --target ${{ matrix.target }} -p contextcli
+          cargo build --release --target ${{ matrix.target }} -p contextcli-gui
 
-      # Package CLI
-      - name: Package CLI
-        run: |
-          tar -czf contextcli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
-            -C target/${{ matrix.target }}/release contextcli
-
-      # Package GUI (.app bundle)
-      - name: Package GUI
+      # macOS: .app bundle + DMG
+      - name: Package macOS
+        if: runner.os == 'macOS'
         run: |
           APP_DIR="ContextCLI.app/Contents"
           mkdir -p "$APP_DIR/MacOS" "$APP_DIR/Resources"
@@ -76,45 +124,59 @@ jobs:
           cat > "$APP_DIR/Info.plist" << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleName</key><string>ContextCLI</string>
-              <key>CFBundleDisplayName</key><string>ContextCLI</string>
-              <key>CFBundleIdentifier</key><string>com.contextcli.app</string>
-              <key>CFBundleVersion</key><string>${{ github.ref_name }}</string>
-              <key>CFBundleShortVersionString</key><string>${{ github.ref_name }}</string>
-              <key>CFBundleExecutable</key><string>ContextCLI</string>
-              <key>CFBundleIconFile</key><string>icon</string>
-              <key>CFBundlePackageType</key><string>APPL</string>
-              <key>LSMinimumSystemVersion</key><string>12.0</string>
-              <key>NSHighResolutionCapable</key><true/>
-          </dict>
-          </plist>
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>ContextCLI</string>
+            <key>CFBundleIdentifier</key><string>com.contextcli.app</string>
+            <key>CFBundleVersion</key><string>${{ github.ref_name }}</string>
+            <key>CFBundleExecutable</key><string>ContextCLI</string>
+            <key>CFBundleIconFile</key><string>icon</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>12.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
           PLIST
           codesign --force --deep --sign - ContextCLI.app
-          zip -r ContextCLI-${{ github.ref_name }}-${{ matrix.target }}.zip ContextCLI.app
+          hdiutil create -volname "ContextCLI" -srcfolder ContextCLI.app -ov -format UDZO \
+            ContextCLI-${{ github.ref_name }}-${{ matrix.target }}.dmg
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      # Linux: tar.gz with binary
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        run: |
+          tar -czf ContextCLI-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
+            -C target/${{ matrix.target }}/release contextcli-gui contextcli
+
+      # Windows: zip with .exe
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path @(
+            "target/${{ matrix.target }}/release/contextcli-gui.exe",
+            "target/${{ matrix.target }}/release/contextcli.exe"
+          ) -DestinationPath "ContextCLI-${{ github.ref_name }}-${{ matrix.target }}.zip"
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.target }}
-          path: |
-            contextcli-*.tar.gz
-            ContextCLI-*.zip
+          name: gui-${{ matrix.target }}
+          path: ContextCLI-${{ github.ref_name }}-*
 
   release:
     name: Create Release
-    needs: build
+    needs: [build-cli, build-gui]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
 
+      - name: List assets
+        run: ls -lh
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            contextcli-*.tar.gz
-            ContextCLI-*.zip
+            contextcli-*
+            ContextCLI-*

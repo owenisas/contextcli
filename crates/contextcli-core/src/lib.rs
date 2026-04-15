@@ -11,7 +11,6 @@ use crate::error::Result;
 use crate::profile::types::AuthState;
 use crate::profile::ProfileManager;
 use crate::router::Router;
-use crate::vault::keychain::KeychainStore;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -43,7 +42,7 @@ impl AppContext {
         let conn = db::open_and_migrate(&db_path)?;
         let conn = Arc::new(Mutex::new(conn));
 
-        let vault = Box::new(KeychainStore::new());
+        let vault = vault::create_store(&data_dir);
         let profile_manager = ProfileManager::new(conn, vault);
         let registry = AdapterRegistry::from_config(&data_dir);
 

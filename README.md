@@ -28,40 +28,47 @@ You → contextcli --app vercel --profile work deploy
 
 ## Installation
 
-### Desktop App (recommended)
+### macOS
 
-Download `ContextCLI-v0.1.0-aarch64-apple-darwin.zip` from the [latest release](https://github.com/owenisas/contextcli/releases/latest).
+**Desktop App** (recommended — includes CLI):
 
+Download the `.dmg` from the [latest release](https://github.com/owenisas/contextcli/releases/latest), open it, drag ContextCLI to Applications. Launch the app and click **"Install CLI Tool"** in the sidebar.
+
+**CLI only:**
 ```bash
-unzip ContextCLI-*.zip
-cp -r ContextCLI.app /Applications/
-```
-
-Open the app. Click **"Install CLI Tool"** in the sidebar to install the `contextcli` command to your PATH. One download, both GUI and CLI.
-
-### CLI Only
-
-```bash
-# Download
+# Apple Silicon
 curl -L https://github.com/owenisas/contextcli/releases/latest/download/contextcli-v0.1.0-aarch64-apple-darwin.tar.gz | tar xz
+sudo cp contextcli /usr/local/bin/
 
-# Install
+# Intel
+curl -L https://github.com/owenisas/contextcli/releases/latest/download/contextcli-v0.1.0-x86_64-apple-darwin.tar.gz | tar xz
 sudo cp contextcli /usr/local/bin/
 ```
 
-### Homebrew
+**Homebrew:**
+```bash
+brew install owenisas/contextcli/contextcli          # CLI
+brew install --cask owenisas/contextcli/contextcli-gui  # Desktop app
+```
+
+### Linux
 
 ```bash
-# CLI
-brew install owenisas/contextcli/contextcli
-
-# Desktop app
-brew install --cask owenisas/contextcli/contextcli-gui
+curl -L https://github.com/owenisas/contextcli/releases/latest/download/contextcli-v0.1.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+sudo cp contextcli /usr/local/bin/
 ```
+
+The GUI is also available — download `ContextCLI-*-linux-gnu.tar.gz` from releases.
+
+### Windows
+
+Download `contextcli-*-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/owenisas/contextcli/releases/latest). Extract and add to your PATH.
+
+The GUI bundle (`ContextCLI-*-windows-msvc.zip`) includes both `contextcli.exe` and `contextcli-gui.exe`.
 
 ### From Source
 
-Requires Rust toolchain and pnpm.
+Requires [Rust](https://rustup.rs/) and [pnpm](https://pnpm.io/).
 
 ```bash
 git clone https://github.com/owenisas/contextcli.git

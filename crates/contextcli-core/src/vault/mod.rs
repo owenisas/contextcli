@@ -1,9 +1,12 @@
+#[cfg(target_os = "macos")]
 pub mod keychain;
+
+pub mod file_vault;
 
 use crate::error::Result;
 
 /// Abstraction over OS credential storage.
-/// macOS: Keychain. Future: Windows Credential Manager, Linux libsecret.
+/// macOS: Keychain. Linux/Windows: encrypted file vault.
 pub trait CredentialStore: Send + Sync {
     /// Store a secret value.
     fn store(&self, service: &str, account: &str, secret: &[u8]) -> Result<()>;
@@ -27,4 +30,16 @@ pub const VAULT_SERVICE: &str = "contextcli";
 
 pub fn vault_account(app_id: &str, profile_name: &str, field: &str) -> String {
     format!("{app_id}/{profile_name}/{field}")
+}
+
+/// Create the platform-appropriate credential store.
+pub fn create_store(data_dir: &std::path::Path) -> Box<dyn CredentialStore> {
+    #[cfg(target_os = "macos")]
+    {
+        Box::new(keychain::KeychainStore::new())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Box::new(file_vault::FileVault::new(data_dir.join("vault")))
+    }
 }
