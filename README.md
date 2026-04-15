@@ -28,26 +28,51 @@ You → contextcli --app vercel --profile work deploy
 
 ## Installation
 
-### From Source (Homebrew Rust)
+### Desktop App (recommended)
+
+Download `ContextCLI-v0.1.0-aarch64-apple-darwin.zip` from the [latest release](https://github.com/owenisas/contextcli/releases/latest).
 
 ```bash
-# Clone
-git clone https://github.com/your-org/contextcli.git
-cd contextcli
-
-# Install CLI
-cargo install --path crates/contextcli
-
-# Build GUI (optional)
-cd ui && pnpm install && pnpm build && cd ..
-cargo build --release -p contextcli-gui
-codesign --force --sign - --identifier "com.contextcli.app" target/release/contextcli-gui
+unzip ContextCLI-*.zip
+cp -r ContextCLI.app /Applications/
 ```
 
-### Homebrew (planned)
+Open the app. Click **"Install CLI Tool"** in the sidebar to install the `contextcli` command to your PATH. One download, both GUI and CLI.
+
+### CLI Only
 
 ```bash
-brew install contextcli
+# Download
+curl -L https://github.com/owenisas/contextcli/releases/latest/download/contextcli-v0.1.0-aarch64-apple-darwin.tar.gz | tar xz
+
+# Install
+sudo cp contextcli /usr/local/bin/
+```
+
+### Homebrew
+
+```bash
+# CLI
+brew install owenisas/contextcli/contextcli
+
+# Desktop app
+brew install --cask owenisas/contextcli/contextcli-gui
+```
+
+### From Source
+
+Requires Rust toolchain and pnpm.
+
+```bash
+git clone https://github.com/owenisas/contextcli.git
+cd contextcli
+
+# CLI only
+cargo install --path crates/contextcli
+
+# GUI (optional)
+cd ui && pnpm install && pnpm build && cd ..
+cargo build --release -p contextcli-gui
 ```
 
 ## Quick Start
