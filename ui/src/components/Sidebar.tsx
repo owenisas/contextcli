@@ -10,11 +10,27 @@ interface SidebarProps {
   onRefresh: () => void;
 }
 
-function appStatusDot(app: App, profiles: Profile[]): string {
-  if (!app.binary_path) return "bg-neutral-500";
+function appStatusRank(app: App, profiles: Profile[]): number {
+  if (!app.binary_path) return 2; // gray — not installed
   const hasAuth = profiles.some((p) => p.auth_state === "authenticated");
-  if (hasAuth) return "bg-success";
-  return "bg-warning";
+  if (hasAuth) return 0; // green
+  return 1; // amber — installed, no auth
+}
+
+function appStatusDot(app: App, profiles: Profile[]): string {
+  const rank = appStatusRank(app, profiles);
+  if (rank === 0) return "bg-success";
+  if (rank === 1) return "bg-warning";
+  return "bg-neutral-500";
+}
+
+function sortApps(apps: App[], profilesMap: Record<string, Profile[]>): App[] {
+  return [...apps].sort((a, b) => {
+    const rankA = appStatusRank(a, profilesMap[a.id] ?? []);
+    const rankB = appStatusRank(b, profilesMap[b.id] ?? []);
+    if (rankA !== rankB) return rankA - rankB;
+    return a.display_name.localeCompare(b.display_name);
+  });
 }
 
 export default function Sidebar({ apps, profilesMap, selectedAppId, onSelect, onRefresh }: SidebarProps) {
@@ -56,7 +72,7 @@ export default function Sidebar({ apps, profilesMap, selectedAppId, onSelect, on
       </div>
 
       <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto">
-        {apps.map((app) => {
+        {sortApps(apps, profilesMap).map((app) => {
           const profiles = profilesMap[app.id] ?? [];
           const isSelected = app.id === selectedAppId;
           return (

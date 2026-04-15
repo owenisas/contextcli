@@ -314,11 +314,24 @@ impl<'a> Router<'a> {
 
         // Update auth state based on validation
         if result.valid {
+            // Preserve existing identity from import if validate returns a
+            // potentially wrong one (e.g. Firebase login:list shows all accounts)
+            let identity_to_store = if result.identity.is_some() {
+                // Only overwrite if profile doesn't already have an identity
+                let existing = self.profile_manager.get_profile(app_id, profile_name).ok();
+                let existing_identity = existing.as_ref().and_then(|p| p.auth_user.as_deref());
+                match existing_identity {
+                    Some(existing) if !existing.is_empty() => Some(existing.to_string()),
+                    _ => result.identity.clone(),
+                }
+            } else {
+                None
+            };
             self.profile_manager.update_auth_state(
                 app_id,
                 profile_name,
                 AuthState::Authenticated,
-                result.identity.as_deref(),
+                identity_to_store.as_deref(),
             )?;
         } else {
             self.profile_manager.update_auth_state(

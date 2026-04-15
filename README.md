@@ -219,6 +219,39 @@ contextcli    contextcli-gui
 - **Auth flow**: env var injection (preferred) or config dir isolation
 - **Project context**: `.contextcli.toml` walks up directories like `.git`
 
+## AI Agent Skill (Claude Code / Codex)
+
+ContextCLI ships a skill that teaches AI agents how to manage your CLI profiles. Install it so your agent can switch accounts, add profiles, and link projects for you.
+
+### Install the skill
+
+```bash
+# Claude Code
+cp -r skill/ ~/.claude/skills/contextcli/
+
+# Codex
+cp -r skill/ ~/.codex/skills/contextcli/
+```
+
+Or with one command:
+
+```bash
+git clone https://github.com/owenisas/contextcli.git /tmp/contextcli-skill
+cp -r /tmp/contextcli-skill/skill/ "${CODEX_HOME:-${CLAUDE_HOME:-$HOME/.claude}}/skills/contextcli/"
+rm -rf /tmp/contextcli-skill
+```
+
+After installing, the agent can:
+- Run CLI commands under specific profiles
+- Add new profiles (token paste + keychain + DB)
+- Link projects to profiles
+- Set up deny policies
+- Check auth status across all tools
+
+### What the agent knows
+
+The skill teaches the agent the exact commands to store tokens in the keychain, create profile records in SQLite, and wire up secret references — so it can add a profile without interactive login.
+
 ## Security
 
 - Tokens stored in macOS Keychain, never in plain files

@@ -171,7 +171,8 @@ const CLI_INSTALL_PATH: &str = "/usr/local/bin/contextcli";
 
 #[tauri::command]
 fn check_cli_installed() -> CmdResult<bool> {
-    Ok(std::path::Path::new(CLI_INSTALL_PATH).exists())
+    // Check if contextcli is anywhere in PATH
+    Ok(which::which("contextcli").is_ok())
 }
 
 #[tauri::command]
