@@ -253,6 +253,44 @@ Once the skill is loaded, your agent can:
 - Set up deny policies
 - Check auth status across all tools
 
+## macOS Keychain Authorization
+
+When a credential is first stored (or if it was stored by an older version of ContextCLI), macOS may show a **"contextcli wants to use your keychain"** dialog once per profile.
+
+### Why it happens
+
+The legacy Keychain API (`SecKeychainAddGenericPassword`) ties each item to the binary's code-signature hash. Every `cargo build` produces a new hash, which triggers a new prompt.
+
+### The fix — one click per profile, then never again
+
+ContextCLI automatically upgrades items to a **permissive ACL** (any application can read silently) on first access. You only need to authorize each profile **once**:
+
+1. Run any command with the affected profile:
+   ```bash
+   contextcli --app vercel --profile work whoami
+   ```
+2. Click **Always Allow** in the dialog that appears.
+3. Done — that profile is permanently unlocked for any binary.
+
+### How to know which profiles need auth
+
+**CLI:**
+```bash
+contextcli apps
+# or
+contextcli profiles --app vercel
+```
+
+Profiles needing action show a `⚠ needs keychain auth` warning with the exact command to run.
+
+**GUI:**
+
+Each affected profile card shows an amber banner:
+
+> ⚠ **Needs one-time keychain authorization.** Run any command with this profile and click **Always Allow** — never prompted again.
+
+The banner disappears automatically after you authorize.
+
 ## Security
 
 - Tokens stored in macOS Keychain, never in plain files
