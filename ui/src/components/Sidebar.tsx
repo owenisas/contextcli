@@ -139,7 +139,7 @@ export default function Sidebar({ apps, profilesMap, selectedAppId, onSelect, on
         )}
 
         <div className="px-3 py-1 text-xs text-text-secondary flex items-center justify-between">
-          <span>v0.1.0</span>
+          <span>v0.2.2</span>
           {cliInstalled === true && (
             <span className="text-[10px] text-success">CLI ✓</span>
           )}
