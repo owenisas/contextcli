@@ -41,9 +41,28 @@ export interface ProjectLink {
   profile_name: string;
 }
 
+export interface AuthCapabilities {
+  interactive_login: boolean;
+  manual_token: boolean;
+  import_file: boolean;
+  import_keychain: boolean;
+  import_command: boolean;
+  multi_account: boolean;
+  config_dir_isolation: boolean;
+  validate_whoami: boolean;
+}
+
 export interface AdapterInfo {
   id: string;
   display_name: string;
   binary_names: string[];
   support_level: string;
+  auth: AuthCapabilities;
+}
+
+export interface InstallResult {
+  path: string;
+  path_shells_updated: string[];
+  needs_shell_restart: boolean;
+  legacy_install_at: string | null;
 }

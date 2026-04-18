@@ -38,6 +38,7 @@ use std::ptr;
 
 // OSStatus codes
 const ERR_SEC_SUCCESS: OSStatus = 0;
+const ERR_SEC_DUPLICATE_ITEM: OSStatus = -25299;
 const ERR_SEC_ITEM_NOT_FOUND: OSStatus = -25300;
 const ERR_SEC_INTERACTION_NOT_ALLOWED: OSStatus = -25315;
 
@@ -76,6 +77,18 @@ unsafe extern "C" {
         result: *mut CFTypeRef,
     ) -> OSStatus;
 
+    /// Delete keychain items matching the query.  Metadata-only op; never
+    /// prompts and ignores ACLs (unlike the legacy `SecKeychainItemDelete`).
+    fn SecItemDelete(
+        query: core_foundation_sys::dictionary::CFDictionaryRef,
+    ) -> OSStatus;
+
+    /// Update attributes/value of matching items.
+    fn SecItemUpdate(
+        query: core_foundation_sys::dictionary::CFDictionaryRef,
+        attributes_to_update: core_foundation_sys::dictionary::CFDictionaryRef,
+    ) -> OSStatus;
+
     /// Attribute key: set a `SecAccessRef` on the item at creation time.
     static kSecAttrAccess: core_foundation_sys::string::CFStringRef;
 
@@ -95,8 +108,11 @@ impl KeychainStore {
 
 impl CredentialStore for KeychainStore {
     fn store(&self, service: &str, account: &str, secret: &[u8]) -> Result<()> {
-        // Remove any existing item (old-ACL or new-ACL) before creating.
-        let _ = self.delete(service, account);
+        // Remove any existing item via SecItemDelete (metadata-only; no ACL check,
+        // no prompt).  The legacy delete_generic_password requires the caller to
+        // be in the item's trusted list, so items created by a different binary
+        // hash would otherwise block re-login with errSecDuplicateItem.
+        unsafe { sec_item_delete(service, account) };
 
         unsafe {
             // Build permissive ACL: [any_app_sentinel] → any process reads silently.
@@ -138,6 +154,11 @@ impl CredentialStore for KeychainStore {
             ]);
 
             let status = SecItemAdd(attrs.as_concrete_TypeRef() as _, ptr::null_mut());
+            if status == ERR_SEC_DUPLICATE_ITEM {
+                // Delete refused (probably an ACL-protected legacy item in a
+                // different keychain).  Update the value in place instead.
+                return sec_item_update_value(service, account, secret);
+            }
             if status != ERR_SEC_SUCCESS {
                 return Err(Error::Vault(format!(
                     "keychain store failed (OSStatus {status})"
@@ -347,6 +368,64 @@ unsafe fn retrieve_via_sec_item(service: &str, account: &str) -> Result<Vec<u8>>
     // result is a CFDataRef when kSecReturnData = true
     let cf_data = unsafe { CFData::wrap_under_create_rule(result as _) };
     Ok(cf_data.to_vec())
+}
+
+/// Delete every matching generic-password item via the modern API.
+/// Metadata-only → no ACL check → no prompt.  Silently ignores "not found".
+unsafe fn sec_item_delete(service: &str, account: &str) {
+    let query = CFDictionary::<CFType, CFType>::from_CFType_pairs(&[
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecClass) }.as_CFType(),
+            unsafe { CFString::wrap_under_get_rule(kSecClassGenericPassword) }.as_CFType(),
+        ),
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecAttrService) }.as_CFType(),
+            CFString::new(service).as_CFType(),
+        ),
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecAttrAccount) }.as_CFType(),
+            CFString::new(account).as_CFType(),
+        ),
+    ]);
+    // Swallow all statuses — caller treats this as best-effort cleanup.
+    let _ = unsafe { SecItemDelete(query.as_concrete_TypeRef() as _) };
+}
+
+/// In-place update of an existing item's secret data.  Used as a fallback
+/// when add-with-delete-first still reports duplicate (e.g. legacy items with
+/// ACLs that block our delete).  Does NOT attempt to rewrite the ACL.
+unsafe fn sec_item_update_value(service: &str, account: &str, secret: &[u8]) -> Result<()> {
+    let query = CFDictionary::<CFType, CFType>::from_CFType_pairs(&[
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecClass) }.as_CFType(),
+            unsafe { CFString::wrap_under_get_rule(kSecClassGenericPassword) }.as_CFType(),
+        ),
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecAttrService) }.as_CFType(),
+            CFString::new(service).as_CFType(),
+        ),
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecAttrAccount) }.as_CFType(),
+            CFString::new(account).as_CFType(),
+        ),
+    ]);
+    let data = CFData::from_buffer(secret);
+    let updates = CFDictionary::<CFType, CFType>::from_CFType_pairs(&[(
+        unsafe { CFString::wrap_under_get_rule(kSecValueData) }.as_CFType(),
+        data.as_CFType(),
+    )]);
+    let status = unsafe {
+        SecItemUpdate(
+            query.as_concrete_TypeRef() as _,
+            updates.as_concrete_TypeRef() as _,
+        )
+    };
+    if status != ERR_SEC_SUCCESS {
+        return Err(Error::Vault(format!(
+            "keychain update failed (OSStatus {status})"
+        )));
+    }
+    Ok(())
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────

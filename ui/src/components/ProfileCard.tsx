@@ -52,6 +52,7 @@ interface ProfileCardProps {
   onValidate: () => Promise<void>;
   onDelete: () => void;
   onLogout: () => void;
+  onImport: () => Promise<void>;
   onRename: (newName: string) => Promise<void>;
 }
 
@@ -62,6 +63,7 @@ export default function ProfileCard({
   onValidate,
   onDelete,
   onLogout,
+  onImport,
   onRename,
 }: ProfileCardProps) {
   const [validating, setValidating] = useState(false);
@@ -228,6 +230,14 @@ export default function ProfileCard({
         >
           {validating ? "Testing..." : "Test"}
         </button>
+        {(profile.auth_state === "unauthenticated" || profile.auth_state === "expired") && (
+          <button
+            onClick={onImport}
+            className="text-xs px-2 py-1 rounded bg-surface-hover hover:bg-accent/10 hover:text-accent transition-colors"
+          >
+            Import
+          </button>
+        )}
         {profile.auth_state === "authenticated" && (
           <button
             onClick={onLogout}

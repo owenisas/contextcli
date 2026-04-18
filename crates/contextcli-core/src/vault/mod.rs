@@ -40,13 +40,28 @@ pub fn vault_account(app_id: &str, profile_name: &str, field: &str) -> String {
 }
 
 /// Create the platform-appropriate credential store.
-pub fn create_store(_data_dir: &std::path::Path) -> Box<dyn CredentialStore> {
-    #[cfg(target_os = "macos")]
-    {
-        Box::new(keychain::KeychainStore::new())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Box::new(file_vault::FileVault::new(data_dir.join("vault")))
+///
+/// On macOS the default is the Keychain. Set `CONTEXTCLI_VAULT=file` to force
+/// the file-based encrypted vault — useful for dev builds and users who don't
+/// want the rebuild-triggered keychain prompts. `CONTEXTCLI_VAULT=keychain` is
+/// also accepted for explicitness (macOS only; ignored elsewhere).
+pub fn create_store(data_dir: &std::path::Path) -> Box<dyn CredentialStore> {
+    let backend = std::env::var("CONTEXTCLI_VAULT")
+        .ok()
+        .map(|s| s.to_ascii_lowercase());
+
+    match backend.as_deref() {
+        Some("file") => Box::new(file_vault::FileVault::new(data_dir.join("vault"))),
+        #[cfg(target_os = "macos")]
+        Some("keychain") | None => Box::new(keychain::KeychainStore::new()),
+        #[cfg(not(target_os = "macos"))]
+        _ => Box::new(file_vault::FileVault::new(data_dir.join("vault"))),
+        #[cfg(target_os = "macos")]
+        Some(other) => {
+            tracing::warn!(
+                "unknown CONTEXTCLI_VAULT={other:?}; falling back to keychain"
+            );
+            Box::new(keychain::KeychainStore::new())
+        }
     }
 }

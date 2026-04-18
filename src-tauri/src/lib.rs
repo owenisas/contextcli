@@ -1,4 +1,4 @@
-use contextcli_core::adapter::types::ValidationResult;
+use contextcli_core::adapter::types::{AuthCapabilities, ValidationResult};
 use contextcli_core::profile::types::{App, Profile, ProjectLink};
 use contextcli_core::AppContext;
 use serde::Serialize;
@@ -13,6 +13,7 @@ pub struct AdapterInfo {
     pub display_name: String,
     pub binary_names: Vec<String>,
     pub support_level: String,
+    pub auth: AuthCapabilities,
 }
 
 // ── App queries ──────────────────────────────────────────
@@ -32,6 +33,7 @@ fn get_adapter_info(ctx: State<'_, Mutex<AppContext>>, app_id: String) -> CmdRes
         display_name: adapter.display_name().to_string(),
         binary_names: vec![adapter.binary_name().to_string()],
         support_level: adapter.support_level().to_string(),
+        auth: adapter.auth_capabilities(),
     })
 }
 
@@ -106,7 +108,7 @@ fn trigger_logout(
     let ctx = ctx.lock().map_err(|e| e.to_string())?;
     let router = ctx.router();
     router
-        .logout(&app_id, &profile_name)
+        .logout(&app_id, Some(&profile_name))
         .map_err(|e| e.to_string())
 }
 
@@ -200,73 +202,238 @@ fn open_terminal_at(path: String) -> CmdResult<()> {
 }
 
 // ── CLI Installation ─────────────────────────────────────
+//
+// Target: $HOME/.local/bin/contextcli (user-writable, no sudo, no password).
+// PATH is configured via idempotent marker blocks in ~/.zshenv and ~/.bash_profile.
 
-const CLI_INSTALL_PATH: &str = "/usr/local/bin/contextcli";
+const LEGACY_INSTALL_PATH: &str = "/usr/local/bin/contextcli";
+const PATH_MARKER_START: &str = "# >>> contextcli PATH >>>";
+const PATH_MARKER_END: &str = "# <<< contextcli PATH <<<";
 
-#[tauri::command]
-fn check_cli_installed() -> CmdResult<bool> {
-    // Check if contextcli is anywhere in PATH
-    Ok(which::which("contextcli").is_ok())
+#[derive(Serialize)]
+pub struct InstallResult {
+    pub path: String,
+    pub path_shells_updated: Vec<String>,
+    pub needs_shell_restart: bool,
+    pub legacy_install_at: Option<String>,
+}
+
+fn home_dir() -> CmdResult<std::path::PathBuf> {
+    std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| "cannot determine home directory".to_string())
+}
+
+fn user_bin_dir() -> CmdResult<std::path::PathBuf> {
+    Ok(home_dir()?.join(".local").join("bin"))
+}
+
+fn user_bin_target() -> CmdResult<std::path::PathBuf> {
+    Ok(user_bin_dir()?.join("contextcli"))
 }
 
 #[tauri::command]
-fn install_cli(app_handle: tauri::AppHandle) -> CmdResult<String> {
-    // Find the embedded CLI binary inside the .app bundle
-    let resource_dir = app_handle
-        .path()
-        .resource_dir()
-        .map_err(|e| format!("cannot find resource dir: {e}"))?;
+fn check_cli_installed() -> CmdResult<bool> {
+    // Trust the user-local target first; fall back to `which` (for legacy or custom installs).
+    if let Ok(target) = user_bin_target()
+        && target.exists()
+    {
+        return Ok(true);
+    }
+    Ok(which::which("contextcli").is_ok())
+}
 
-    let embedded_cli = resource_dir.join("contextcli");
-
-    // Also check Contents/Resources/ directly (for manual .app builds)
-    let embedded_cli = if embedded_cli.exists() {
-        embedded_cli
+/// Report a legacy `/usr/local/bin/contextcli` install so the UI can prompt the
+/// user to remove it manually (avoids requesting sudo from the app).
+#[tauri::command]
+fn detect_legacy_install() -> CmdResult<Option<String>> {
+    let p = std::path::Path::new(LEGACY_INSTALL_PATH);
+    Ok(if p.exists() {
+        Some(LEGACY_INSTALL_PATH.to_string())
     } else {
-        // Resolve from the executable path
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let app_contents = exe
-            .parent() // MacOS/
-            .and_then(|p| p.parent()) // Contents/
-            .ok_or("cannot resolve .app bundle path")?;
-        let alt = app_contents.join("Resources/contextcli");
-        if alt.exists() {
-            alt
-        } else {
-            return Err(format!(
-                "CLI binary not found in app bundle. Looked at:\n  {}\n  {}",
-                embedded_cli.display(),
-                alt.display()
-            ));
-        }
-    };
+        None
+    })
+}
 
-    // Ensure /usr/local/bin exists
-    let install_dir = std::path::Path::new("/usr/local/bin");
-    if !install_dir.exists() {
-        std::fs::create_dir_all(install_dir).map_err(|e| {
-            format!("cannot create /usr/local/bin (may need sudo): {e}")
-        })?;
+/// Locate the embedded CLI binary inside the .app bundle.
+///
+/// Tauri v2's `externalBin` places sidecars at `Contents/MacOS/<name>-<triple>`
+/// alongside the main executable. We also fall back to the historic
+/// `Contents/Resources/contextcli` layout for local dev builds.
+fn find_embedded_cli(app_handle: &tauri::AppHandle) -> CmdResult<std::path::PathBuf> {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+
+    // Preferred: sidecar next to the main executable.
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(exe_dir) = exe.parent()
+    {
+        for triple in sidecar_triples() {
+            candidates.push(exe_dir.join(format!("contextcli-{triple}")));
+        }
+        candidates.push(exe_dir.join("contextcli"));
+        // Contents/Resources/contextcli (legacy layout).
+        if let Some(contents) = exe_dir.parent() {
+            candidates.push(contents.join("Resources").join("contextcli"));
+        }
     }
 
-    // Copy the binary
-    std::fs::copy(&embedded_cli, CLI_INSTALL_PATH)
-        .map_err(|e| format!("failed to install CLI to {CLI_INSTALL_PATH}: {e}"))?;
+    // Last resort: Tauri's resource_dir.
+    if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        candidates.push(resource_dir.join("contextcli"));
+    }
 
-    // Make executable
+    for path in &candidates {
+        if path.exists() {
+            return Ok(path.clone());
+        }
+    }
+
+    Err(format!(
+        "CLI binary not found in app bundle. Looked at:\n  {}",
+        candidates
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    ))
+}
+
+fn sidecar_triples() -> &'static [&'static str] {
+    #[cfg(target_os = "macos")]
+    {
+        if cfg!(target_arch = "aarch64") {
+            &["aarch64-apple-darwin", "universal-apple-darwin"]
+        } else {
+            &["x86_64-apple-darwin", "universal-apple-darwin"]
+        }
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        &["x86_64-unknown-linux-gnu"]
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        &["aarch64-unknown-linux-gnu"]
+    }
+    #[cfg(target_os = "windows")]
+    {
+        &["x86_64-pc-windows-msvc"]
+    }
+}
+
+/// Append a marker-wrapped `export PATH=...` block to a shell rc file if missing.
+/// Returns true if the file was modified, false if the block was already present.
+fn ensure_path_in_rc(rc_path: &std::path::Path, export_line: &str) -> CmdResult<bool> {
+    let existing = match std::fs::read_to_string(rc_path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("failed to read {}: {e}", rc_path.display())),
+    };
+
+    if existing.contains(PATH_MARKER_START) {
+        return Ok(false);
+    }
+
+    // Ensure the existing content ends with a newline before we append.
+    let needs_leading_newline = !existing.is_empty() && !existing.ends_with('\n');
+    let mut new_content = existing;
+    if needs_leading_newline {
+        new_content.push('\n');
+    }
+    new_content.push_str(&format!(
+        "\n{PATH_MARKER_START}\n{export_line}\n{PATH_MARKER_END}\n"
+    ));
+
+    std::fs::write(rc_path, new_content)
+        .map_err(|e| format!("failed to write {}: {e}", rc_path.display()))?;
+    Ok(true)
+}
+
+/// Configure `$HOME/.local/bin` on PATH via the user's shell rc files.
+/// Returns the list of rc files that were modified (empty if all already had it).
+fn ensure_path_configured() -> CmdResult<Vec<String>> {
+    let home = home_dir()?;
+    let export_line = r#"export PATH="$HOME/.local/bin:$PATH""#;
+
+    let targets = [
+        ("~/.zshenv", home.join(".zshenv")),
+        ("~/.bash_profile", home.join(".bash_profile")),
+    ];
+
+    let mut updated = Vec::new();
+    for (label, path) in targets {
+        if ensure_path_in_rc(&path, export_line)? {
+            updated.push(label.to_string());
+        }
+    }
+    Ok(updated)
+}
+
+#[tauri::command]
+fn install_cli(app_handle: tauri::AppHandle) -> CmdResult<InstallResult> {
+    let embedded_cli = find_embedded_cli(&app_handle)?;
+    let bin_dir = user_bin_dir()?;
+    let target = user_bin_target()?;
+
+    std::fs::create_dir_all(&bin_dir)
+        .map_err(|e| format!("failed to create {}: {e}", bin_dir.display()))?;
+
+    std::fs::copy(&embedded_cli, &target)
+        .map_err(|e| format!("failed to install CLI to {}: {e}", target.display()))?;
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(CLI_INSTALL_PATH, std::fs::Permissions::from_mode(0o755))
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))
             .map_err(|e| format!("failed to set permissions: {e}"))?;
     }
 
-    // Codesign
-    let _ = std::process::Command::new("codesign")
-        .args(["--force", "--sign", "-", "--identifier", "com.contextcli.cli", CLI_INSTALL_PATH])
-        .output();
+    // Ad-hoc re-sign so macOS accepts the relocated binary.
+    // If the sidecar was already signed with a Developer ID, this replaces that
+    // signature with an ad-hoc one — acceptable for user-local copy. The app
+    // bundle itself retains its Developer ID signature.
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("codesign")
+            .args([
+                "--force",
+                "--sign",
+                "-",
+                "--identifier",
+                "com.contextcli.cli",
+            ])
+            .arg(&target)
+            .output()
+            .map_err(|e| format!("codesign failed to spawn: {e}"))?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            tracing::warn!("codesign non-zero exit: {stderr}");
+            // Don't fail the install — ad-hoc sign is best-effort.
+        }
+    }
 
-    Ok(CLI_INSTALL_PATH.to_string())
+    let path_shells_updated = ensure_path_configured()?;
+
+    // If PATH already contains ~/.local/bin at runtime, no shell restart needed.
+    let home = home_dir()?;
+    let target_dir_str = home.join(".local").join("bin");
+    let path_has_target = std::env::var("PATH")
+        .ok()
+        .map(|p| {
+            p.split(':')
+                .any(|e| std::path::Path::new(e) == target_dir_str)
+        })
+        .unwrap_or(false);
+    let needs_shell_restart = !path_has_target;
+
+    let legacy_install_at = detect_legacy_install()?;
+
+    Ok(InstallResult {
+        path: target.display().to_string(),
+        path_shells_updated,
+        needs_shell_restart,
+        legacy_install_at,
+    })
 }
 
 // ── Tauri entry point ────────────────────────────────────
@@ -301,6 +468,7 @@ pub fn run() {
             open_terminal_at,
             check_cli_installed,
             install_cli,
+            detect_legacy_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

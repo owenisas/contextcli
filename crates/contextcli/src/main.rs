@@ -37,12 +37,12 @@ enum Commands {
         #[arg(long)]
         profile: String,
     },
-    /// Log out of a profile
+    /// Log out of a profile (uses default if --profile omitted)
     Logout {
         #[arg(long)]
         app: String,
         #[arg(long)]
-        profile: String,
+        profile: Option<String>,
     },
     /// List profiles for an app
     Profiles {
@@ -99,7 +99,11 @@ enum Commands {
         to: String,
     },
     /// List all registered apps
-    Apps,
+    Apps {
+        /// Show auth capability details per app
+        #[arg(long)]
+        auth: bool,
+    },
 }
 
 /// Split raw argv into (contextcli_args, forward_args).
@@ -188,7 +192,9 @@ fn main() {
 
     let result = match cli.command {
         Some(Commands::Login { app, profile }) => commands::login::run(&ctx, &app, &profile),
-        Some(Commands::Logout { app, profile }) => commands::logout::run(&ctx, &app, &profile),
+        Some(Commands::Logout { app, profile }) => {
+            commands::logout::run(&ctx, &app, profile.as_deref())
+        }
         Some(Commands::Profiles { app }) => commands::profiles::run(&ctx, &app),
         Some(Commands::Default { app, profile }) => commands::default::run(&ctx, &app, &profile),
         Some(Commands::Shell { app, profile }) => {
@@ -202,7 +208,7 @@ fn main() {
         Some(Commands::Link { app, profile }) => commands::link::run(&ctx, &app, &profile),
         Some(Commands::Unlink { app }) => commands::link::unlink(&ctx, &app),
         Some(Commands::Project) => commands::link::show(),
-        Some(Commands::Apps) => commands::apps::run(&ctx),
+        Some(Commands::Apps { auth }) => commands::apps::run(&ctx, auth),
         None => {
             match cli.app {
                 Some(app) => {

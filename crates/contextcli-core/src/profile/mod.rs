@@ -135,6 +135,29 @@ impl ProfileManager {
         .map_err(|_| Error::NoDefaultProfile(app_id.to_string()))
     }
 
+    /// If exactly one profile exists for this app, return it.
+    /// Used as an implicit default when no explicit default is set.
+    /// Uses a COUNT query first to avoid fetching all profiles + vault checks.
+    pub fn get_sole_profile(&self, app_id: &str) -> Option<Profile> {
+        let count: i64 = {
+            let conn = self.conn.lock().ok()?;
+            conn.query_row(
+                "SELECT COUNT(*) FROM profiles WHERE app_id = ?1",
+                params![app_id],
+                |row| row.get(0),
+            )
+            .ok()?
+        };
+        if count == 1 {
+            self.list_profiles(app_id)
+                .ok()?
+                .into_iter()
+                .next()
+        } else {
+            None
+        }
+    }
+
     /// List all profiles for an app, annotated with keychain auth state.
     pub fn list_profiles(&self, app_id: &str) -> Result<Vec<Profile>> {
         // Scope the connection so it is released before the vault checks below.
@@ -641,5 +664,30 @@ mod tests {
         pm.create_profile("vercel", "work", None).unwrap();
         let result = pm.create_profile("vercel", "work", None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sole_profile_returns_single() {
+        let pm = setup();
+        pm.create_profile("vercel", "work", None).unwrap();
+        let sole = pm.get_sole_profile("vercel");
+        assert!(sole.is_some());
+        assert_eq!(sole.unwrap().profile_name, "work");
+    }
+
+    #[test]
+    fn test_sole_profile_none_when_zero() {
+        let pm = setup();
+        let sole = pm.get_sole_profile("vercel");
+        assert!(sole.is_none());
+    }
+
+    #[test]
+    fn test_sole_profile_none_when_multiple() {
+        let pm = setup();
+        pm.create_profile("vercel", "work", None).unwrap();
+        pm.create_profile("vercel", "personal", None).unwrap();
+        let sole = pm.get_sole_profile("vercel");
+        assert!(sole.is_none());
     }
 }

@@ -3,7 +3,7 @@ use contextcli_core::AppContext;
 use contextcli_core::error::Result;
 use contextcli_core::jwt;
 
-pub fn run(ctx: &AppContext) -> Result<()> {
+pub fn run(ctx: &AppContext, show_auth: bool) -> Result<()> {
     let apps = ctx.profile_manager.list_apps()?;
 
     if apps.is_empty() {
@@ -48,6 +48,21 @@ pub fn run(ctx: &AppContext) -> Result<()> {
             "  {} — {} | {} profile(s), default: {}{}",
             app.display_name, binary_status, profile_count, default_name, expiry_warn
         );
+
+        // Auth capabilities line
+        if show_auth {
+            if let Ok(adapter) = ctx.registry.get(&app.id) {
+                let caps = adapter.auth_capabilities();
+                let labels = caps.enabled_labels();
+                let count = caps.auth_path_count();
+                let warn = if count <= 1 { " ⚠" } else { "" };
+                eprintln!(
+                    "    auth: {}{}",
+                    labels.join(", "),
+                    warn
+                );
+            }
+        }
 
         // Show keychain auth warning per profile that needs it
         for p in profiles.iter().filter(|p| p.needs_keychain_auth) {

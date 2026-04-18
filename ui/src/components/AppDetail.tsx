@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { App, Profile, AdapterInfo, ProjectLink } from "../lib/types";
+import type { App, Profile, AdapterInfo, ProjectLink, AuthCapabilities } from "../lib/types";
 import { api } from "../lib/api";
 import ProfileCard from "./ProfileCard";
 import AddProfileDialog from "./AddProfileDialog";
@@ -13,7 +13,59 @@ interface AppDetailProps {
   onValidate: (profileName: string) => Promise<void>;
   onDelete: (profileName: string) => Promise<void>;
   onLogout: (profileName: string) => Promise<void>;
+  onImport: (profileName: string) => Promise<void>;
   onRename: (oldName: string, newName: string) => Promise<void>;
+}
+
+const AUTH_BADGES: { key: keyof AuthCapabilities; label: string; tip: string }[] = [
+  { key: "interactive_login", label: "Login", tip: "Interactive CLI login flow" },
+  { key: "manual_token", label: "Manual", tip: "Paste a token or API key" },
+  { key: "import_file", label: "File", tip: "Import from native config file" },
+  { key: "import_keychain", label: "Keychain", tip: "Import from macOS Keychain" },
+  { key: "import_command", label: "Command", tip: "Import via token command" },
+  { key: "multi_account", label: "Multi-acct", tip: "Multi-account import" },
+  { key: "config_dir_isolation", label: "Config dir", tip: "Isolated config per profile" },
+  { key: "validate_whoami", label: "Whoami", tip: "Can validate identity" },
+];
+
+function AuthBadges({ auth }: { auth: AuthCapabilities }) {
+  const authPaths = [
+    auth.interactive_login,
+    auth.manual_token,
+    auth.import_file,
+    auth.import_keychain,
+    auth.import_command,
+  ].filter(Boolean).length;
+
+  const isLoginOnly = authPaths <= 1;
+
+  return (
+    <div className="mt-2">
+      <div className="flex flex-wrap gap-1.5">
+        {AUTH_BADGES.map(({ key, label, tip }) => {
+          const enabled = auth[key];
+          return (
+            <span
+              key={key}
+              title={tip}
+              className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-colors ${
+                enabled
+                  ? "bg-accent/12 text-accent"
+                  : "bg-surface text-text-secondary/30"
+              }`}
+            >
+              {label}
+            </span>
+          );
+        })}
+      </div>
+      {isLoginOnly && (
+        <p className="text-[10px] text-warning mt-1.5">
+          Limited auth — logout forces full re-authentication. No import or manual token path.
+        </p>
+      )}
+    </div>
+  );
 }
 
 export default function AppDetail({
@@ -25,6 +77,7 @@ export default function AppDetail({
   onValidate,
   onDelete,
   onLogout,
+  onImport,
   onRename,
 }: AppDetailProps) {
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -62,6 +115,11 @@ export default function AppDetail({
             </>
           )}
         </div>
+
+        {/* Auth capability badges */}
+        {adapterInfo?.auth && (
+          <AuthBadges auth={adapterInfo.auth} />
+        )}
       </div>
 
       {/* Profiles section */}
@@ -82,8 +140,14 @@ export default function AppDetail({
           <div className="border border-dashed border-border rounded-lg p-8 text-center">
             <p className="text-sm text-text-secondary">No profiles yet</p>
             <p className="text-xs text-text-secondary mt-1">
-              Create a profile to get started
+              Create a profile or import from your existing CLI config
             </p>
+            <button
+              onClick={() => onImport("default")}
+              className="mt-3 text-xs px-3 py-1.5 rounded-lg bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+            >
+              Import from CLI
+            </button>
           </div>
         ) : (
           <div className="space-y-2">
@@ -98,6 +162,7 @@ export default function AppDetail({
                 onValidate={() => onValidate(p.profile_name)}
                 onDelete={() => onDelete(p.profile_name)}
                 onLogout={() => onLogout(p.profile_name)}
+                onImport={() => onImport(p.profile_name)}
                 onRename={(newName) => onRename(p.profile_name, newName)}
               />
             ))}

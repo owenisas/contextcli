@@ -4,7 +4,8 @@
   "identifier": "com.contextcli.app",
   "build": {
     "frontendDist": "../ui/dist",
-    "beforeBuildCommand": "cd ../ui && pnpm build"
+    "beforeBuildCommand": "cd ../ui && pnpm build",
+    "beforeBundleCommand": "bash ../scripts/prepare-sidecar.sh"
   },
   "app": {
     "security": {
@@ -21,5 +22,14 @@
         "minHeight": 500
       }
     ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "externalBin": ["binaries/contextcli"],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "entitlements": "./Entitlements.plist"
+    }
   }
 }

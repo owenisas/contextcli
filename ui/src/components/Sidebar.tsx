@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { App, Profile } from "../lib/types";
+import type { App, Profile, InstallResult } from "../lib/types";
 import { api } from "../lib/api";
 
 interface SidebarProps {
@@ -36,21 +36,26 @@ function sortApps(apps: App[], profilesMap: Record<string, Profile[]>): App[] {
 export default function Sidebar({ apps, profilesMap, selectedAppId, onSelect, onRefresh }: SidebarProps) {
   const [cliInstalled, setCliInstalled] = useState<boolean | null>(null);
   const [installing, setInstalling] = useState(false);
-  const [installResult, setInstallResult] = useState<string | null>(null);
+  const [installResult, setInstallResult] = useState<InstallResult | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const [legacyInstall, setLegacyInstall] = useState<string | null>(null);
 
   useEffect(() => {
     api.checkCliInstalled().then(setCliInstalled).catch(() => setCliInstalled(null));
+    api.detectLegacyInstall().then(setLegacyInstall).catch(() => setLegacyInstall(null));
   }, []);
 
   const handleInstallCli = async () => {
     setInstalling(true);
     setInstallResult(null);
+    setInstallError(null);
     try {
-      const path = await api.installCli();
+      const result = await api.installCli();
       setCliInstalled(true);
-      setInstallResult(path);
+      setInstallResult(result);
+      setLegacyInstall(result.legacy_install_at);
     } catch (e) {
-      setInstallResult("Error: " + String(e));
+      setInstallError(String(e));
     } finally {
       setInstalling(false);
     }
@@ -106,9 +111,30 @@ export default function Sidebar({ apps, profilesMap, selectedAppId, onSelect, on
             {installing ? "Installing..." : "Install CLI Tool"}
           </button>
         )}
+        {installError && (
+          <div className="px-3 py-1.5 text-[10px] text-danger bg-danger/10 rounded-lg break-words">
+            {installError}
+          </div>
+        )}
         {cliInstalled === true && installResult && (
-          <div className="px-3 py-1.5 text-[10px] text-success bg-success/10 rounded-lg">
-            ✓ CLI installed
+          <div className="px-3 py-2 text-[10px] text-success bg-success/10 rounded-lg space-y-1">
+            <div>✓ Installed at <span className="font-mono">{installResult.path}</span></div>
+            {installResult.needs_shell_restart && (
+              <div className="text-text-secondary">
+                Open a new terminal tab to use <span className="font-mono">contextcli</span>.
+              </div>
+            )}
+            {installResult.path_shells_updated.length > 0 && (
+              <div className="text-text-secondary">
+                Updated {installResult.path_shells_updated.join(", ")}.
+              </div>
+            )}
+          </div>
+        )}
+        {legacyInstall && (
+          <div className="px-3 py-2 text-[10px] text-warning bg-warning/10 rounded-lg space-y-1">
+            <div>Old install detected at <span className="font-mono">{legacyInstall}</span>.</div>
+            <div className="text-text-secondary">Run <span className="font-mono">sudo rm {legacyInstall}</span> to remove it.</div>
           </div>
         )}
 

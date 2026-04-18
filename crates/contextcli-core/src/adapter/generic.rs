@@ -4,8 +4,8 @@
 //! Users add any CLI tool in a few lines — no Rust code, no recompilation.
 
 use crate::adapter::types::{
-    AdapterContext, AuthStrategy, CapturedCredentials, CredentialField, InvocationEnv,
-    ResolvedProfile, ValidationResult,
+    AdapterContext, AuthCapabilities, AuthStrategy, CapturedCredentials, CredentialField,
+    InvocationEnv, ResolvedProfile, ValidationResult,
 };
 use crate::adapter::AppAdapter;
 use crate::error::{Error, Result};
@@ -217,8 +217,26 @@ impl GenericAdapter {
 
     /// Try to import from native config file (JSON or YAML)
     fn import_from_config_file(&self) -> Option<CapturedCredentials> {
+        self.import_from_config_file_at(None)
+    }
+
+    /// Like `import_from_config_file`, but reads from `override_dir` instead of
+    /// the native absolute path.  The basename of `native_config_path` is
+    /// appended to `override_dir` (e.g. `auth.json`, `config.yml`).  Used after
+    /// `login()` to capture credentials from the profile's isolated config dir
+    /// rather than the tool's global default.
+    fn import_from_config_file_at(
+        &self,
+        override_dir: Option<&std::path::Path>,
+    ) -> Option<CapturedCredentials> {
         let path_str = self.def.native_config_path.as_ref()?;
-        let path = expand_path(path_str);
+        let path = match override_dir {
+            Some(dir) => {
+                let filename = std::path::Path::new(path_str).file_name()?;
+                dir.join(filename)
+            }
+            None => expand_path(path_str),
+        };
         let content = std::fs::read_to_string(&path).ok()?;
         let json: serde_json::Value = if path_str.ends_with(".yml") || path_str.ends_with(".yaml") {
             serde_yaml::from_str(&content).ok()?
@@ -559,15 +577,49 @@ impl AppAdapter for GenericAdapter {
             )));
         }
 
-        // After login, try to capture credentials via import methods
-        if let Some(creds) = self.import_from_command() {
-            return Ok(creds);
-        }
-        if let Some(creds) = self.import_from_config_file() {
-            return Ok(creds);
-        }
-        if let Some(creds) = self.import_from_keychain() {
-            return Ok(creds);
+        // After login, capture credentials.  When the tool was launched with
+        // a per-profile config dir, read from that dir — reading the global
+        // default would pick up a stale or cross-profile token (vercel mirrors
+        // its last login to both paths, which otherwise causes every profile
+        // to capture the same token).
+        let config_dir_active = self.def.config_dir_flag.is_some()
+            || self.def.config_dir_env.is_some();
+        if config_dir_active {
+            if let Some(creds) = self.import_from_config_file_at(Some(&ctx.config_dir)) {
+                return Ok(creds);
+            }
+            // Fall through: command-based import (e.g. `gh auth token`) runs
+            // in-process and needs the config dir env var set.  Handled below
+            // via the regular import_from_command path — works correctly when
+            // we set the env var ourselves before invoking.
+            if let Some(env_var) = &self.def.config_dir_env {
+                // Temporarily scope the env var for the token-capturing command.
+                let prev = std::env::var(env_var).ok();
+                unsafe { std::env::set_var(env_var, &ctx.config_dir) };
+                let creds = self.import_from_command();
+                match prev {
+                    Some(v) => unsafe { std::env::set_var(env_var, v) },
+                    None => unsafe { std::env::remove_var(env_var) },
+                }
+                if let Some(c) = creds {
+                    return Ok(c);
+                }
+            } else if let Some(c) = self.import_from_command() {
+                return Ok(c);
+            }
+            if let Some(creds) = self.import_from_keychain() {
+                return Ok(creds);
+            }
+        } else {
+            if let Some(creds) = self.import_from_command() {
+                return Ok(creds);
+            }
+            if let Some(creds) = self.import_from_config_file() {
+                return Ok(creds);
+            }
+            if let Some(creds) = self.import_from_keychain() {
+                return Ok(creds);
+            }
         }
 
         // Login succeeded but couldn't capture token — user needs to provide manually
@@ -665,6 +717,20 @@ impl AppAdapter for GenericAdapter {
 
     fn support_level(&self) -> &str {
         &self.def.support_level
+    }
+
+    fn auth_capabilities(&self) -> AuthCapabilities {
+        AuthCapabilities {
+            interactive_login: self.def.login_args.is_some(),
+            manual_token: self.def.env_token.is_some() || self.def.env_vars.is_some(),
+            import_file: self.def.native_config_path.is_some(),
+            import_keychain: self.def.native_keychain_service.is_some(),
+            import_command: self.def.native_token_command.is_some(),
+            multi_account: self.def.native_additional_accounts_key.is_some(),
+            config_dir_isolation: self.def.config_dir_env.is_some()
+                || self.def.config_dir_flag.is_some(),
+            validate_whoami: self.def.whoami_args.is_some(),
+        }
     }
 
     fn import_existing(&self) -> Result<Option<CapturedCredentials>> {
@@ -843,6 +909,8 @@ display_name = "Netlify"
 env_token = "NETLIFY_AUTH_TOKEN"
 login_args = ["login"]
 whoami_args = ["status"]
+native_config_path = "~/.netlify/config.json"
+native_token_key = "access_token"
 
 # ── Fly.io ───────────────────────────────────────────────
 [tool.fly]
@@ -872,6 +940,7 @@ display_name = "Heroku"
 env_token = "HEROKU_API_KEY"
 login_args = ["login"]
 whoami_args = ["auth:whoami"]
+native_token_command = ["heroku", "auth:token"]
 
 # ── DigitalOcean ─────────────────────────────────────────
 [tool.doctl]
@@ -880,6 +949,8 @@ display_name = "DigitalOcean"
 env_token = "DIGITALOCEAN_ACCESS_TOKEN"
 login_args = ["auth", "init"]
 whoami_args = ["account", "get"]
+native_config_path = "~/.config/doctl/config.yaml"
+native_token_key = "access-token"
 
 # ── Terraform ────────────────────────────────────────────
 [tool.terraform]

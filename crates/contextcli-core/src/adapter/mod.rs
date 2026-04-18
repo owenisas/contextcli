@@ -5,8 +5,8 @@ use crate::error::{Error, Result};
 use std::collections::HashMap;
 use std::path::Path;
 use types::{
-    AdapterContext, AuthStrategy, CapturedCredentials, CredentialField, InvocationEnv,
-    ResolvedProfile, ValidationResult,
+    AdapterContext, AuthCapabilities, AuthStrategy, CapturedCredentials, CredentialField,
+    InvocationEnv, ResolvedProfile, ValidationResult,
 };
 
 /// Each supported CLI app implements this trait.
@@ -45,6 +45,20 @@ pub trait AppAdapter: Send + Sync {
     /// Support level: "tier1", "tier2", "tier3".
     fn support_level(&self) -> &str {
         "tier1"
+    }
+
+    /// What auth pathways this adapter supports.
+    fn auth_capabilities(&self) -> AuthCapabilities {
+        AuthCapabilities {
+            interactive_login: false,
+            manual_token: false,
+            import_file: false,
+            import_keychain: false,
+            import_command: false,
+            multi_account: false,
+            config_dir_isolation: false,
+            validate_whoami: false,
+        }
     }
 
     /// Import credentials from the native CLI's existing config.

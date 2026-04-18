@@ -1,5 +1,5 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
-import type { App, Profile, ValidationResult, AdapterInfo, ProjectLink } from "./types";
+import type { App, Profile, ValidationResult, AdapterInfo, ProjectLink, InstallResult } from "./types";
 
 // Detect if running inside Tauri webview
 const isTauri = typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
@@ -119,9 +119,18 @@ let mockProfiles: Record<string, Profile[]> = {
 };
 
 const MOCK_ADAPTER_INFO: Record<string, AdapterInfo> = {
-  vercel: { id: "vercel", display_name: "Vercel", binary_names: ["vercel"], support_level: "tier1" },
-  gh: { id: "gh", display_name: "GitHub CLI", binary_names: ["gh"], support_level: "tier1" },
-  supabase: { id: "supabase", display_name: "Supabase", binary_names: ["supabase"], support_level: "tier1" },
+  vercel: {
+    id: "vercel", display_name: "Vercel", binary_names: ["vercel"], support_level: "tier1",
+    auth: { interactive_login: true, manual_token: true, import_file: true, import_keychain: false, import_command: false, multi_account: false, config_dir_isolation: true, validate_whoami: true },
+  },
+  gh: {
+    id: "gh", display_name: "GitHub CLI", binary_names: ["gh"], support_level: "tier1",
+    auth: { interactive_login: true, manual_token: true, import_file: false, import_keychain: false, import_command: true, multi_account: false, config_dir_isolation: true, validate_whoami: true },
+  },
+  supabase: {
+    id: "supabase", display_name: "Supabase", binary_names: ["supabase"], support_level: "tier1",
+    auth: { interactive_login: true, manual_token: true, import_file: false, import_keychain: true, import_command: false, multi_account: false, config_dir_isolation: false, validate_whoami: false },
+  },
 };
 
 async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -181,6 +190,17 @@ async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
     }
     case "import_profile":
       return true as T;
+    case "check_cli_installed":
+      return true as T;
+    case "detect_legacy_install":
+      return null as T;
+    case "install_cli":
+      return {
+        path: "/Users/mock/.local/bin/contextcli",
+        path_shells_updated: ["~/.zshenv"],
+        needs_shell_restart: true,
+        legacy_install_at: null,
+      } as T;
     case "list_project_links":
       if (appId === "vercel") {
         return [
@@ -237,5 +257,7 @@ export const api = {
 
   checkCliInstalled: () => invoke<boolean>("check_cli_installed"),
 
-  installCli: () => invoke<string>("install_cli"),
+  installCli: () => invoke<InstallResult>("install_cli"),
+
+  detectLegacyInstall: () => invoke<string | null>("detect_legacy_install"),
 };

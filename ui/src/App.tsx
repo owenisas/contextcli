@@ -108,6 +108,15 @@ export default function App() {
     [selectedAppId, refreshProfiles]
   );
 
+  const handleImport = useCallback(
+    async (profileName: string) => {
+      if (!selectedAppId) return;
+      await api.importProfile(selectedAppId, profileName);
+      await refreshProfiles(selectedAppId);
+    },
+    [selectedAppId, refreshProfiles]
+  );
+
   const handleRename = useCallback(
     async (oldName: string, newName: string) => {
       if (!selectedAppId) return;
@@ -152,6 +161,7 @@ export default function App() {
             onValidate={handleValidate}
             onDelete={handleDelete}
             onLogout={handleLogout}
+            onImport={handleImport}
             onRename={handleRename}
           />
         ) : (
