@@ -102,7 +102,17 @@ impl<'a> Router<'a> {
         };
 
         // 8. Ask adapter to prepare invocation env
-        let invocation = adapter.prepare_env(&resolved)?;
+        let config_dir = self
+            .data_dir
+            .join("configs")
+            .join(app_id)
+            .join(&profile.profile_name);
+        let ctx = AdapterContext {
+            config_dir,
+            profile_name: profile.profile_name.clone(),
+            app_id: app_id.to_string(),
+        };
+        let invocation = adapter.prepare_env(&ctx, &resolved)?;
 
         // 9. Find binary
         let binary_name = adapter.binary_name();
@@ -208,7 +218,17 @@ impl<'a> Router<'a> {
         )?;
 
         // Try importing
-        let creds = match adapter.import_existing()? {
+        let config_dir = self
+            .data_dir
+            .join("configs")
+            .join(app_id)
+            .join(profile_name);
+        let ctx = AdapterContext {
+            config_dir,
+            profile_name: profile_name.to_string(),
+            app_id: app_id.to_string(),
+        };
+        let creds = match adapter.import_existing(&ctx)? {
             Some(c) => c,
             None => return Ok(false),
         };
@@ -420,7 +440,17 @@ impl<'a> Router<'a> {
             secrets,
         };
 
-        let invocation = adapter.prepare_env(&resolved)?;
+        let config_dir = self
+            .data_dir
+            .join("configs")
+            .join(app_id)
+            .join(&profile.profile_name);
+        let ctx = AdapterContext {
+            config_dir,
+            profile_name: profile.profile_name.clone(),
+            app_id: app_id.to_string(),
+        };
+        let invocation = adapter.prepare_env(&ctx, &resolved)?;
 
         // Launch user's shell with env injected
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
@@ -475,7 +505,7 @@ impl<'a> Router<'a> {
         Err(Error::NoDefaultProfile(app_id.to_string()))
     }
 
-    /// Check token expiry. If expired, try silent re-import then interactive re-login.
+    /// Check token expiry. If expired, try silent re-import only.
     /// If near expiry (<24h), warn to stderr but proceed.
     ///
     /// Sets `AuthState::Expired` before attempting refresh so the profile is in a
@@ -502,6 +532,17 @@ impl<'a> Router<'a> {
             .as_secs() as i64;
         let expires_in = expires_at - now;
 
+        let config_dir = self
+            .data_dir
+            .join("configs")
+            .join(app_id)
+            .join(&profile.profile_name);
+        let ctx = AdapterContext {
+            config_dir,
+            profile_name: profile.profile_name.clone(),
+            app_id: app_id.to_string(),
+        };
+
         if expires_in <= EXPIRY_BUFFER_SECS {
             // Token expired (or about to) — mark Expired for crash safety
             eprintln!(
@@ -516,7 +557,7 @@ impl<'a> Router<'a> {
             );
 
             // Try silent re-import first
-            if let Ok(Some(creds)) = adapter.import_existing() {
+            if let Ok(Some(creds)) = adapter.import_existing(&ctx) {
                 for (key, value) in &creds.fields {
                     self.profile_manager.store_secret(profile, key, value)?;
                 }
@@ -540,13 +581,17 @@ impl<'a> Router<'a> {
                         .unwrap_or_default()
                         .as_secs() as i64;
                     if new_exp <= new_now + EXPIRY_BUFFER_SECS {
-                        eprintln!("  re-imported token is also expired, re-authenticating...");
-                        self.login(app_id, &profile.profile_name)?;
-                        eprintln!("✓ re-authenticated");
-                        *profile = self
-                            .profile_manager
-                            .get_profile(app_id, &profile.profile_name)?;
-                        return Ok(());
+                        eprintln!("  re-imported token is also expired; manual re-auth required");
+                        self.profile_manager.update_auth_state(
+                            app_id,
+                            &profile.profile_name,
+                            AuthState::Error,
+                            creds.identity.as_deref().or(profile.auth_user.as_deref()),
+                        )?;
+                        return Err(Error::Other(format!(
+                            "token for {}/{} still expired after silent refresh; run `contextcli login`",
+                            app_id, profile.profile_name
+                        )));
                     }
                 }
 
@@ -554,13 +599,11 @@ impl<'a> Router<'a> {
                 return Ok(());
             }
 
-            // Fall back to interactive re-login
-            eprintln!("  re-authenticating...");
-            self.login(app_id, &profile.profile_name)?;
-            eprintln!("✓ re-authenticated");
-            *profile = self
-                .profile_manager
-                .get_profile(app_id, &profile.profile_name)?;
+            eprintln!("⚠ token refresh failed silently for {}/{}", app_id, profile.profile_name);
+            return Err(Error::Other(format!(
+                "token for {}/{} could not be refreshed silently; run `contextcli login`",
+                app_id, profile.profile_name
+            )));
         } else if expires_in < NEAR_EXPIRY_SECS {
             // Warn: expires within 24 hours
             let hours = expires_in / 3600;

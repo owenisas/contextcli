@@ -8,6 +8,7 @@ pub mod router;
 pub mod vault;
 
 use crate::adapter::AdapterRegistry;
+use crate::adapter::types::AdapterContext;
 use crate::error::Result;
 use crate::profile::types::AuthState;
 use crate::profile::ProfileManager;
@@ -76,7 +77,14 @@ impl AppContext {
                             .filter_map(|p| p.auth_user.clone())
                             .collect();
 
-                    match adapter.import_all_accounts() {
+                    let config_dir = data_dir.join("configs").join(adapter.id()).join("default");
+                    let ctx = AdapterContext {
+                        config_dir,
+                        profile_name: "default".to_string(),
+                        app_id: adapter.id().to_string(),
+                    };
+
+                    match adapter.import_all_accounts(&ctx) {
                         Ok(accounts) if !accounts.is_empty() => {
                             let mut first = true;
                             let mut imported = 0usize;

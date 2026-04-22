@@ -121,7 +121,7 @@ let mockProfiles: Record<string, Profile[]> = {
 const MOCK_ADAPTER_INFO: Record<string, AdapterInfo> = {
   vercel: {
     id: "vercel", display_name: "Vercel", binary_names: ["vercel"], support_level: "tier1",
-    auth: { interactive_login: true, manual_token: true, import_file: true, import_keychain: false, import_command: false, multi_account: false, config_dir_isolation: true, validate_whoami: true },
+    auth: { interactive_login: true, manual_token: false, import_file: true, import_keychain: false, import_command: false, multi_account: false, config_dir_isolation: true, validate_whoami: true },
   },
   gh: {
     id: "gh", display_name: "GitHub CLI", binary_names: ["gh"], support_level: "tier1",

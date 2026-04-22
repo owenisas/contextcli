@@ -32,7 +32,13 @@ pub trait AppAdapter: Send + Sync {
 
     /// Prepare the invocation environment for forwarding.
     /// Returns env vars to set + any extra CLI args to prepend.
-    fn prepare_env(&self, profile: &ResolvedProfile) -> Result<InvocationEnv>;
+    /// `ctx` carries the per-profile config dir so adapters can route the
+    /// native CLI to isolated state (e.g. vercel `--global-config=<dir>`).
+    fn prepare_env(
+        &self,
+        ctx: &AdapterContext,
+        profile: &ResolvedProfile,
+    ) -> Result<InvocationEnv>;
 
     /// What credential fields this adapter stores per profile.
     fn credential_fields(&self) -> &[CredentialField];
@@ -63,15 +69,15 @@ pub trait AppAdapter: Send + Sync {
 
     /// Import credentials from the native CLI's existing config.
     /// Returns None if no existing auth is found.
-    fn import_existing(&self) -> Result<Option<CapturedCredentials>> {
+    fn import_existing(&self, _ctx: &AdapterContext) -> Result<Option<CapturedCredentials>> {
         Ok(None)
     }
 
     /// Import all accounts from the native CLI (multi-account tools like Firebase).
     /// Each entry is (profile_name_suggestion, credentials).
-    /// Default: wraps import_existing into a single-element vec.
-    fn import_all_accounts(&self) -> Result<Vec<(String, CapturedCredentials)>> {
-        match self.import_existing()? {
+    /// Default: wraps `import_existing` into a single-element vec.
+    fn import_all_accounts(&self, ctx: &AdapterContext) -> Result<Vec<(String, CapturedCredentials)>> {
+        match self.import_existing(ctx)? {
             Some(creds) => Ok(vec![("default".to_string(), creds)]),
             None => Ok(vec![]),
         }

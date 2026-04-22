@@ -109,6 +109,14 @@ pub struct ToolDef {
     /// Support level: tier1, tier2, tier3
     #[serde(default = "default_support_level")]
     pub support_level: String,
+
+    /// When true, the config dir (flag/env) is authoritative and the env_token
+    /// is NOT injected at invocation time. Required for OAuth-based CLIs like
+    /// Vercel where the stored access token (e.g. vca_…) is a session token,
+    /// not an API bearer — injecting it as VERCEL_TOKEN makes the CLI reject
+    /// auth even when the per-profile auth.json is valid.
+    #[serde(default)]
+    pub prefer_config_dir: bool,
 }
 
 /// Named env var definition for multi-env tools
@@ -180,7 +188,16 @@ pub struct GenericAdapter {
 }
 
 impl GenericAdapter {
-    pub fn from_def(id: String, def: ToolDef) -> Self {
+    pub fn from_def(id: String, mut def: ToolDef) -> Self {
+        // Built-in opt-in: CLIs whose stored token is an OAuth *session* token
+        // (not a valid API bearer) must use their config dir at invocation
+        // time. Injecting the token as env_token causes the CLI to reject auth
+        // (Vercel: "The token provided via VERCEL_TOKEN environment variable
+        // is not valid"). Users with an older adapters.toml lacking the
+        // explicit `prefer_config_dir` field still get the fix.
+        if matches!(id.as_str(), "vercel") {
+            def.prefer_config_dir = true;
+        }
         let credential_fields = Self::build_credential_fields(&def);
         Self {
             id,
@@ -213,6 +230,11 @@ impl GenericAdapter {
                 required: true,
             }]
         }
+    }
+
+    fn uses_isolated_config_dir(&self) -> bool {
+        self.def.prefer_config_dir
+            && (self.def.config_dir_flag.is_some() || self.def.config_dir_env.is_some())
     }
 
     /// Try to import from native config file (JSON or YAML)
@@ -520,9 +542,18 @@ impl AppAdapter for GenericAdapter {
     }
 
     fn auth_strategy(&self) -> AuthStrategy {
+        let use_config_dir = self.uses_isolated_config_dir();
+
         if let Some(env_vars) = &self.def.env_vars {
             AuthStrategy::MultiEnv {
                 env_vars: env_vars.iter().map(|v| v.env_var.clone()).collect(),
+            }
+        } else if use_config_dir
+            && (self.def.config_dir_flag.is_some() || self.def.config_dir_env.is_some())
+        {
+            AuthStrategy::ConfigDir {
+                override_flag: self.def.config_dir_flag.clone(),
+                override_env: self.def.config_dir_env.clone(),
             }
         } else if let Some(env_var) = &self.def.env_token {
             if self.def.config_dir_env.is_some() || self.def.config_dir_flag.is_some() {
@@ -631,7 +662,7 @@ impl AppAdapter for GenericAdapter {
 
     fn validate(
         &self,
-        _ctx: &AdapterContext,
+        ctx: &AdapterContext,
         secrets: &ResolvedProfile,
     ) -> Result<ValidationResult> {
         let whoami_args = match &self.def.whoami_args {
@@ -650,8 +681,19 @@ impl AppAdapter for GenericAdapter {
             cmd.arg(arg);
         }
 
-        // Inject credentials
-        if let Some(env_vars) = &self.def.env_vars {
+        // Inject credentials. For config-dir-authoritative tools, point the
+        // native CLI at the per-profile config dir and do NOT inject the
+        // stored token as env_token (see prepare_env for rationale).
+        let use_config_dir = self.uses_isolated_config_dir();
+
+        if use_config_dir {
+            if let Some(flag) = &self.def.config_dir_flag {
+                cmd.arg(format!("{flag}={}", ctx.config_dir.display()));
+            }
+            if let Some(env_var) = &self.def.config_dir_env {
+                cmd.env(env_var, &ctx.config_dir);
+            }
+        } else if let Some(env_vars) = &self.def.env_vars {
             for ev in env_vars {
                 if let Ok(secret) = secrets.get_secret(&ev.field) {
                     cmd.env(&ev.env_var, secret.expose_secret());
@@ -686,10 +728,31 @@ impl AppAdapter for GenericAdapter {
         }
     }
 
-    fn prepare_env(&self, profile: &ResolvedProfile) -> Result<InvocationEnv> {
+    fn prepare_env(
+        &self,
+        ctx: &AdapterContext,
+        profile: &ResolvedProfile,
+    ) -> Result<InvocationEnv> {
         let mut env_vars = HashMap::new();
+        let mut extra_args = Vec::new();
 
-        if let Some(ev_defs) = &self.def.env_vars {
+        // When the tool treats its config dir as authoritative (OAuth session
+        // tokens, e.g. Vercel), route the native CLI to the per-profile dir
+        // and skip env_token injection — the stored token is not a valid API
+        // bearer and would be rejected if injected.
+        let use_config_dir = self.uses_isolated_config_dir();
+
+        if use_config_dir {
+            if let Some(flag) = &self.def.config_dir_flag {
+                extra_args.push(format!("{flag}={}", ctx.config_dir.display()));
+            }
+            if let Some(env_var) = &self.def.config_dir_env {
+                env_vars.insert(
+                    env_var.clone(),
+                    SecretString::from(ctx.config_dir.to_string_lossy().into_owned()),
+                );
+            }
+        } else if let Some(ev_defs) = &self.def.env_vars {
             for ev in ev_defs {
                 if let Ok(secret) = profile.get_secret(&ev.field) {
                     env_vars.insert(ev.env_var.clone(), secret);
@@ -702,8 +765,12 @@ impl AppAdapter for GenericAdapter {
 
         Ok(InvocationEnv {
             env_vars,
-            extra_args: vec![],
-            config_dir: None,
+            extra_args,
+            config_dir: if use_config_dir {
+                Some(ctx.config_dir.clone())
+            } else {
+                None
+            },
         })
     }
 
@@ -722,7 +789,8 @@ impl AppAdapter for GenericAdapter {
     fn auth_capabilities(&self) -> AuthCapabilities {
         AuthCapabilities {
             interactive_login: self.def.login_args.is_some(),
-            manual_token: self.def.env_token.is_some() || self.def.env_vars.is_some(),
+            manual_token: self.def.env_vars.is_some()
+                || (self.def.env_token.is_some() && !self.uses_isolated_config_dir()),
             import_file: self.def.native_config_path.is_some(),
             import_keychain: self.def.native_keychain_service.is_some(),
             import_command: self.def.native_token_command.is_some(),
@@ -733,7 +801,33 @@ impl AppAdapter for GenericAdapter {
         }
     }
 
-    fn import_existing(&self) -> Result<Option<CapturedCredentials>> {
+    fn import_existing(&self, ctx: &AdapterContext) -> Result<Option<CapturedCredentials>> {
+        if self.uses_isolated_config_dir() {
+            if let Some(creds) = self.import_from_config_file_at(Some(&ctx.config_dir)) {
+                return Ok(Some(creds));
+            }
+
+            if let Some(env_var) = &self.def.config_dir_env {
+                let prev = std::env::var(env_var).ok();
+                unsafe { std::env::set_var(env_var, &ctx.config_dir) };
+                let creds = self.import_from_command();
+                match prev {
+                    Some(v) => unsafe { std::env::set_var(env_var, v) },
+                    None => unsafe { std::env::remove_var(env_var) },
+                }
+                if creds.is_some() {
+                    return Ok(creds);
+                }
+            } else if let Some(creds) = self.import_from_command() {
+                return Ok(Some(creds));
+            }
+
+            if let Some(creds) = self.import_from_keychain() {
+                return Ok(Some(creds));
+            }
+            return Ok(None);
+        }
+
         // Try each import method in priority order
         if let Some(creds) = self.import_from_command() {
             return Ok(Some(creds));
@@ -747,7 +841,7 @@ impl AppAdapter for GenericAdapter {
         Ok(None)
     }
 
-    fn import_all_accounts(&self) -> Result<Vec<(String, CapturedCredentials)>> {
+    fn import_all_accounts(&self, ctx: &AdapterContext) -> Result<Vec<(String, CapturedCredentials)>> {
         let mut accounts = Vec::new();
 
         // If this tool has multi-account config (like Firebase), parse all accounts
@@ -758,7 +852,7 @@ impl AppAdapter for GenericAdapter {
         }
 
         // Fallback: single account via import_existing
-        if let Some(creds) = self.import_existing()? {
+        if let Some(creds) = self.import_existing(ctx)? {
             accounts.push(("default".to_string(), creds));
         }
 
