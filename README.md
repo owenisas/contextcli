@@ -1,6 +1,8 @@
 # ContextCLI
 
-Universal CLI profile launcher. Run any developer CLI under a named auth profile.
+> **One machine. Multiple accounts. Zero friction.**
+
+ContextCLI is a universal CLI profile launcher. Run any developer CLI under a named auth profile — switch between Vercel, GitHub, Supabase, AWS and a dozen more without re-logging in, sharing tokens, or littering your shell with env exports.
 
 ```bash
 contextcli --app vercel --profile work deploy --prod
@@ -8,11 +10,13 @@ contextcli --app gh --profile personal pr list
 contextcli --app supabase --profile client-a db push
 ```
 
-One machine, multiple accounts, zero friction. ContextCLI wraps your existing CLIs — it doesn't replace them.
+Written in **Rust** (core + CLI) with a **Tauri v2 + React** desktop app. Adapters are data-driven — add a new tool by editing TOML, no Rust code, no recompilation. Tokens live in the **macOS Keychain**, never in plain files.
+
+---
 
 ## How It Works
 
-ContextCLI sits between you and your CLI tools. It resolves which auth profile to use, injects the right credentials (via environment variables), and forwards your command unchanged to the real binary.
+ContextCLI sits between you and your native CLIs. It resolves the named profile, pulls the token from macOS Keychain, injects it as an environment variable, and forwards your command — unchanged — to the real binary.
 
 ```
 You → contextcli --app vercel --profile work deploy
@@ -26,15 +30,24 @@ You → contextcli --app vercel --profile work deploy
         Output passes through transparently
 ```
 
+No shims. No proxy processes. No token files on disk. ContextCLI wraps your existing tooling — it doesn't replace it.
+
+---
+
 ## Installation
 
-### macOS
+| Platform | Method | Command / Link |
+|----------|--------|----------------|
+| **macOS** | Homebrew (recommended) | `brew install owenisas/contextcli/contextcli` |
+| **macOS GUI** | Homebrew cask | `brew install --cask owenisas/contextcli/contextcli-gui` |
+| **macOS** | Binary | [Releases](https://github.com/owenisas/contextcli/releases/latest) — `.tar.gz`, ARM + Intel |
+| **Linux** | Binary | [Releases](https://github.com/owenisas/contextcli/releases/latest) — `x86_64-unknown-linux-gnu.tar.gz` |
+| **Windows** | Binary | [Releases](https://github.com/owenisas/contextcli/releases/latest) — `x86_64-pc-windows-msvc.zip` |
+| **Any** | From source | `cargo install --path crates/contextcli` |
 
-**Desktop App** (recommended — includes CLI):
+<details>
+<summary><b>Manual macOS install</b></summary>
 
-Download the `.dmg` from the [latest release](https://github.com/owenisas/contextcli/releases/latest), open it, drag ContextCLI to Applications. Launch the app and click **"Install CLI Tool"** in the sidebar.
-
-**CLI only:**
 ```bash
 # Apple Silicon
 curl -L https://github.com/owenisas/contextcli/releases/latest/download/contextcli-v0.1.0-aarch64-apple-darwin.tar.gz | tar xz
@@ -45,13 +58,12 @@ curl -L https://github.com/owenisas/contextcli/releases/latest/download/contextc
 sudo cp contextcli /usr/local/bin/
 ```
 
-**Homebrew:**
-```bash
-brew install owenisas/contextcli/contextcli          # CLI
-brew install --cask owenisas/contextcli/contextcli-gui  # Desktop app
-```
+**Desktop app:** download the `.dmg` from the [latest release](https://github.com/owenisas/contextcli/releases/latest), drag ContextCLI to Applications, launch and click **"Install CLI Tool"** in the sidebar.
 
-### Linux
+</details>
+
+<details>
+<summary><b>Linux install</b></summary>
 
 ```bash
 curl -L https://github.com/owenisas/contextcli/releases/latest/download/contextcli-v0.1.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
@@ -60,13 +72,19 @@ sudo cp contextcli /usr/local/bin/
 
 The GUI is also available — download `ContextCLI-*-linux-gnu.tar.gz` from releases.
 
-### Windows
+</details>
+
+<details>
+<summary><b>Windows install</b></summary>
 
 Download `contextcli-*-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/owenisas/contextcli/releases/latest). Extract and add to your PATH.
 
 The GUI bundle (`ContextCLI-*-windows-msvc.zip`) includes both `contextcli.exe` and `contextcli-gui.exe`.
 
-### From Source
+</details>
+
+<details>
+<summary><b>Build from source</b></summary>
 
 Requires [Rust](https://rustup.rs/) and [pnpm](https://pnpm.io/).
 
@@ -82,13 +100,17 @@ cd ui && pnpm install && pnpm build && cd ..
 cargo build --release -p contextcli-gui
 ```
 
+</details>
+
+---
+
 ## Quick Start
 
 ```bash
 # First run — auto-detects existing credentials from native CLIs
 contextcli apps
 
-# That's it. Your Vercel, GitHub, Supabase, Firebase, Railway tokens
+# Your Vercel, GitHub, Supabase, Firebase, Railway tokens
 # are already imported. Use them immediately:
 contextcli --app vercel whoami
 contextcli --app gh api user --jq .login
@@ -105,6 +127,8 @@ contextcli --app vercel --profile personal env pull
 contextcli default --app vercel --profile work
 ```
 
+---
+
 ## CLI Reference
 
 ### Forwarding (primary use)
@@ -113,7 +137,7 @@ contextcli default --app vercel --profile work
 contextcli --app <tool> [--profile <name>] <command and args>
 ```
 
-Everything after `--app` and `--profile` is forwarded verbatim to the native CLI. No `--profile` = uses default.
+Everything after `--app` and `--profile` is forwarded **verbatim** to the native CLI. Omit `--profile` to use the default.
 
 ### Management Commands
 
@@ -131,9 +155,11 @@ Everything after `--app` and `--profile` is forwarded verbatim to the native CLI
 | `contextcli unlink --app <tool>` | Remove directory link |
 | `contextcli project` | Show current project config |
 
+---
+
 ## Supported Tools (15 built-in)
 
-All defined in `~/.contextcli/adapters.toml`. Edit to add any CLI.
+All defined in `~/.contextcli/adapters.toml` — edit it to add any CLI.
 
 | Tool | Env Var | Auto-Import |
 |------|---------|-------------|
@@ -167,6 +193,8 @@ whoami_args = ["whoami"]
 
 No Rust code. No recompilation. Works immediately.
 
+---
+
 ## Project Config
 
 Place `.contextcli.toml` in any project root:
@@ -184,13 +212,23 @@ args_contain = ["deploy", "--prod"]
 reason = "Cannot deploy to prod with personal account"
 ```
 
-**Auto-switch**: Commands in this directory auto-use the mapped profile.
-**Policies**: Block dangerous command + profile combos before they reach the CLI.
-**Explicit override**: `--profile` flag always wins over project config.
+- **Auto-switch** — commands in this directory auto-use the mapped profile.
+- **Policies** — block dangerous command + profile combos before they reach the CLI.
+- **Explicit override** — the `--profile` flag always wins over project config.
+
+---
 
 ## Desktop App
 
-Tauri v2 + React. Dark theme. Manage profiles visually.
+A native desktop companion — Tauri v2 + React, dark theme, profile management at a glance.
+
+| Feature | |
+|---------|-|
+| Sidebar | All apps in one view |
+| Profile cards | Add, delete, set default, test connection |
+| Project mappings | Open-in-Finder / open-in-Terminal |
+| Auth status | Auto-refreshes on window focus |
+| Network | No localhost port in production — frontend is embedded in the binary |
 
 ```bash
 # Build & run
@@ -200,9 +238,7 @@ codesign --force --sign - --identifier "com.contextcli.app" target/release/conte
 ./target/release/contextcli-gui
 ```
 
-Features: sidebar with all apps, profile cards, add/delete profiles, set default, test connection, project mappings with open-in-Finder/Terminal. Auto-refreshes on window focus.
-
-**No localhost port in production** — frontend is embedded in the binary.
+---
 
 ## Architecture
 
@@ -213,17 +249,19 @@ contextcli    contextcli-gui
 (CLI)         (Tauri + React)
 ```
 
-- **Adapters**: Data-driven via `adapters.toml` — generic adapter reads TOML, no per-tool Rust code
-- **Secrets**: macOS Keychain via `security-framework`, wrapped in `secrecy::SecretString`
-- **Database**: SQLite (`~/.contextcli/contextcli.db`) — apps, profiles, secret_refs, project_links
-- **Auth flow**: env var injection (preferred) or config dir isolation
-- **Project context**: `.contextcli.toml` walks up directories like `.git`
+| Layer | Detail |
+|-------|--------|
+| **Adapters** | Data-driven via `adapters.toml` — a generic adapter reads the TOML; no per-tool Rust code |
+| **Secrets** | macOS Keychain via `security-framework`, wrapped in `secrecy::SecretString` |
+| **Database** | SQLite (`~/.contextcli/contextcli.db`) — apps, profiles, secret_refs, project_links |
+| **Auth flow** | Env var injection (preferred) or config-dir isolation |
+| **Project context** | `.contextcli.toml` walks up directories like `.git` |
+
+---
 
 ## AI Agent Integration
 
-ContextCLI includes skills/instructions for AI coding agents. When you clone the repo, your agent automatically learns how to manage CLI profiles.
-
-### Supported Agents
+ContextCLI ships skills/instructions for AI coding agents. Clone the repo and your agent automatically learns how to manage CLI profiles.
 
 | Agent | File | Auto-discovered |
 |-------|------|-----------------|
@@ -232,9 +270,7 @@ ContextCLI includes skills/instructions for AI coding agents. When you clone the
 | **Cursor** | `.cursorrules` | Yes, on clone |
 | **GitHub Copilot** | `.github/copilot-instructions.md` | Yes, on clone |
 
-### For personal use (all projects)
-
-Copy the skill to your global skills directory so it works everywhere, not just in this repo:
+### Use everywhere (not just this repo)
 
 ```bash
 # Claude Code
@@ -244,61 +280,59 @@ cp -r .claude/skills/contextcli/ ~/.claude/skills/contextcli/
 cp -r .windsurf/skills/contextcli/ ~/.windsurf/skills/contextcli/
 ```
 
-### What the agent can do
-
 Once the skill is loaded, your agent can:
+
 - Run CLI commands under specific profiles
-- Add new profiles (stores token in keychain + creates DB records)
+- Add new profiles (stores token in Keychain + creates DB records)
 - Link projects to profiles
 - Set up deny policies
 - Check auth status across all tools
 
+---
+
 ## macOS Keychain Authorization
 
-When a credential is first stored (or if it was stored by an older version of ContextCLI), macOS may show a **"contextcli wants to use your keychain"** dialog once per profile.
+When a credential is first stored (or was stored by an older ContextCLI version), macOS may show a **"contextcli wants to use your keychain"** dialog once per profile.
 
-### Why it happens
+**Why:** the legacy Keychain API (`SecKeychainAddGenericPassword`) ties each item to the binary's code-signature hash. Every `cargo build` produces a new hash → a new prompt.
 
-The legacy Keychain API (`SecKeychainAddGenericPassword`) ties each item to the binary's code-signature hash. Every `cargo build` produces a new hash, which triggers a new prompt.
-
-### The fix — one click per profile, then never again
-
-ContextCLI automatically upgrades items to a **permissive ACL** (any application can read silently) on first access. You only need to authorize each profile **once**:
+**The fix — one click per profile, then never again.** ContextCLI automatically upgrades items to a **permissive ACL** on first access. You only need to authorize each profile **once**:
 
 1. Run any command with the affected profile:
    ```bash
    contextcli --app vercel --profile work whoami
    ```
-2. Click **Always Allow** in the dialog that appears.
+2. Click **Always Allow** in the dialog.
 3. Done — that profile is permanently unlocked for any binary.
 
-### How to know which profiles need auth
+### Which profiles need auth?
 
 **CLI:**
+
 ```bash
-contextcli apps
-# or
 contextcli profiles --app vercel
 ```
 
 Profiles needing action show a `⚠ needs keychain auth` warning with the exact command to run.
 
-**GUI:**
-
-Each affected profile card shows an amber banner:
+**GUI:** each affected profile card shows an amber banner:
 
 > ⚠ **Needs one-time keychain authorization.** Run any command with this profile and click **Always Allow** — never prompted again.
 
 The banner disappears automatically after you authorize.
 
+---
+
 ## Security
 
-- Tokens stored in macOS Keychain, never in plain files
-- In-memory secrets wrapped in `SecretString` (zeroized on drop)
-- Env var injection over CLI flags (not visible in `ps`)
-- No tokens in logs or activity records
-- File permissions: dirs `0700`, files `0600`
-- Policy rules block dangerous command combos
+- **Keychain-first** — tokens stored in macOS Keychain, never in plain files.
+- **Zeroized secrets** — in-memory tokens wrapped in `SecretString`, erased on drop.
+- **Env var injection over CLI flags** — credentials aren't visible in `ps`.
+- **No tokens in logs or activity records.**
+- **File permissions** — dirs `0700`, files `0600`.
+- **Policy rules** — block dangerous command + profile combos before they run.
+
+---
 
 ## License
 
